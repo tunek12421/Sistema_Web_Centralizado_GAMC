@@ -116,6 +116,9 @@ backups/
 *.dump
 *.sql
 
+# Excepciones: Scripts de inicialización de BD
+!database/init/*.sql
+
 # Archivos temporales del sistema
 .DS_Store
 .DS_Store?
