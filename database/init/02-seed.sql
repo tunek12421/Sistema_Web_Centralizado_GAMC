@@ -217,7 +217,7 @@ RETURNS TABLE(
     urgent_messages BIGINT,
     pending_messages BIGINT,
     avg_response_time NUMERIC
-) AS $
+) AS $$
 BEGIN
     RETURN QUERY
     SELECT 
@@ -230,7 +230,7 @@ BEGIN
         (SELECT AVG(EXTRACT(EPOCH FROM (responded_at - created_at))/60) 
          FROM messages WHERE responded_at IS NOT NULL) as avg_response_time;
 END;
-$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql;
 
 -- Función para obtener mensajes por unidad organizacional
 CREATE OR REPLACE FUNCTION get_messages_by_unit(unit_id INTEGER, limit_count INTEGER DEFAULT 50)
@@ -246,7 +246,7 @@ RETURNS TABLE(
     is_urgent BOOLEAN,
     created_at TIMESTAMP,
     attachment_count BIGINT
-) AS $
+) AS $$
 BEGIN
     RETURN QUERY
     SELECT 
@@ -271,11 +271,11 @@ BEGIN
     ORDER BY m.created_at DESC
     LIMIT limit_count;
 END;
-$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql;
 
 -- Función para marcar mensaje como leído
 CREATE OR REPLACE FUNCTION mark_message_as_read(message_id BIGINT, user_id UUID)
-RETURNS BOOLEAN AS $
+RETURNS BOOLEAN AS $$
 DECLARE
     message_exists BOOLEAN;
     user_has_access BOOLEAN;
@@ -313,7 +313,7 @@ BEGIN
     
     RETURN TRUE;
 END;
-$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql;
 
 -- ========================================
 -- CREAR ÍNDICES ADICIONALES PARA OPTIMIZACIÓN
@@ -339,7 +339,7 @@ SET timezone = 'America/La_Paz';
 ANALYZE;
 
 -- Mensaje de confirmación
-DO $
+DO $$
 BEGIN
     RAISE NOTICE '==============================================';
     RAISE NOTICE 'GAMC Sistema Web Centralizado';
@@ -356,4 +356,4 @@ BEGIN
     RAISE NOTICE 'Usuario: obras.input | Contraseña: admin123';
     RAISE NOTICE 'Usuario: monitoreo.output | Contraseña: admin123';
     RAISE NOTICE '==============================================';
-END $;
+END $$;

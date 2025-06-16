@@ -258,7 +258,7 @@ CREATE TRIGGER update_messages_updated_at BEFORE UPDATE ON messages
 
 -- Función para popular dim_date
 CREATE OR REPLACE FUNCTION populate_dim_date(start_date DATE, end_date DATE)
-RETURNS VOID AS $
+RETURNS VOID AS $$
 DECLARE
     curr_date DATE := start_date;
 BEGIN
@@ -283,7 +283,7 @@ BEGIN
         curr_date := curr_date + INTERVAL '1 day';
     END LOOP;
 END;
-$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql;
 
 -- Función para popular dim_time
 CREATE OR REPLACE FUNCTION populate_dim_time()

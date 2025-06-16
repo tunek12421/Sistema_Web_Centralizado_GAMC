@@ -24,8 +24,6 @@ services:
     volumes:
       # Scripts de inicialización
       - ./database/init:/docker-entrypoint-initdb.d:ro
-      # Configuración personalizada
-      - ./database/postgresql.conf:/etc/postgresql/postgresql.conf:ro
       # Persistencia de datos
       - postgres_data:/var/lib/postgresql/data
       # Backups
@@ -49,14 +47,12 @@ services:
     image: redis:7-alpine
     container_name: gamc_redis
     restart: unless-stopped
-    command: redis-server /usr/local/etc/redis/redis.conf
+    command: redis-server --appendonly yes
     environment:
       TZ: America/La_Paz
     ports:
       - "6379:6379"
     volumes:
-      # Configuración personalizada
-      - ./redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
       # Persistencia de datos
       - redis_data:/data
       # Logs
@@ -132,7 +128,7 @@ services:
       PORT: 3000
       API_PREFIX: /api/v1
       DATABASE_URL: postgresql://gamc_user:gamc_password_2024@postgres:5432/gamc_system
-      REDIS_URL: redis://:gamc_redis_password_2024@redis:6379/0
+      REDIS_URL: redis://redis:6379/0
       JWT_SECRET: gamc_jwt_secret_super_secure_2024_key_never_share
       JWT_REFRESH_SECRET: gamc_jwt_refresh_secret_super_secure_2024_key
       JWT_EXPIRES_IN: 15m
@@ -224,7 +220,6 @@ services:
     restart: unless-stopped
     environment:
       REDIS_HOSTS: "GAMC Redis:redis:6379"
-      REDIS_PASSWORD: "gamc_redis_password_2024"
       HTTP_USER: admin
       HTTP_PASSWORD: admin123
       PORT: 8081
@@ -284,16 +279,16 @@ services:
 
 volumes:
   postgres_data:
-    external: true
+    driver: local
     name: gamc_postgres_data
   pgadmin_data:
-    external: true
+    driver: local
     name: gamc_pgadmin_data
   redis_data:
-    external: true
+    driver: local
     name: gamc_redis_data
   minio_data:
-    external: true
+    driver: local
     name: gamc_minio_data
 
 # ========================================
@@ -302,5 +297,5 @@ volumes:
 
 networks:
   gamc_network:
-    external: true
+    driver: bridge
     name: gamc_network
