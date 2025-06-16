@@ -56,7 +56,7 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onRegistrationSuccess, onBa
     return { isValid: true, message: '✓ Email válido (se recomienda usar @gamc.gov.bo)', type: 'warning' };
   };
 
-  // Función para validar contraseña
+  // Función para validar contraseña - CORREGIDA para sincronizar con backend
   const validatePassword = (password: string): FieldValidation => {
     if (!password) {
       return { isValid: false, message: 'La contraseña es requerida', type: 'error' };
@@ -69,13 +69,14 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onRegistrationSuccess, onBa
     const hasUppercase = /[A-Z]/.test(password);
     const hasLowercase = /[a-z]/.test(password);
     const hasNumbers = /\d/.test(password);
-    const hasSymbols = /[!@#$%^&*(),.?":{}|<>]/.test(password);
+    // CORRECCIÓN: Usar exactamente los mismos caracteres especiales que el backend
+    const hasSymbols = /[@$!%*?&]/.test(password);
     
     const missing = [];
     if (!hasUppercase) missing.push('mayúscula');
     if (!hasLowercase) missing.push('minúscula');
     if (!hasNumbers) missing.push('número');
-    if (!hasSymbols) missing.push('símbolo');
+    if (!hasSymbols) missing.push('símbolo (@$!%*?&)');
     
     if (missing.length > 0) {
       return { 
@@ -187,7 +188,7 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onRegistrationSuccess, onBa
         }, 5000);
         
       } else {
-        // Manejar errores HTTP específicos
+        // Manejar errores HTTP específicos - MEJORADO
         switch (response.status) {
           case 409:
             setMessage('👤 Este email ya está registrado. ¿Desea iniciar sesión en su lugar?');
@@ -197,8 +198,8 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onRegistrationSuccess, onBa
               setMessage('👤 El usuario ya existe: Este email ya está registrado en el sistema');
             } else if (result.message?.includes('organizacional')) {
               setMessage('🏢 Unidad organizacional inválida. Seleccione una opción válida');
-            } else if (result.message?.includes('password')) {
-              setMessage('🔒 La contraseña no cumple con los requisitos de seguridad');
+            } else if (result.message?.includes('password') || result.error?.includes('contraseña')) {
+              setMessage(`🔒 ${result.error || result.message}`);
             } else {
               setMessage(`📝 Datos inválidos: ${result.message || 'Verifique los campos del formulario'}`);
             }
@@ -324,7 +325,7 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onRegistrationSuccess, onBa
               value={registerData.password}
               onChange={(e) => setRegisterData({ ...registerData, password: e.target.value })}
               className={getInputClasses(registerValidation.password)}
-              placeholder="Mínimo 8 caracteres"
+              placeholder="Mínimo 8 caracteres con @$!%*?&"
               required
               minLength={8}
             />
