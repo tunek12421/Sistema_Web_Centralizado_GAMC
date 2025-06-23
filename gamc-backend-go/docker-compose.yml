@@ -1,0 +1,102 @@
+# =====================================
+# docker-compose.yml
+version: '3.8'
+
+services:
+  # ========================================
+  # SERVICIOS DE INFRAESTRUCTURA
+  # ========================================
+
+  # Base de datos PostgreSQL
+  postgres:
+    image: postgres:15-alpine
+    container_name: gamc_postgres_go
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: gamc_system
+      POSTGRES_USER: gamc_user
+      POSTGRES_PASSWORD: gamc_password_2024
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=es_BO.UTF-8"
+      TZ: America/La_Paz
+    ports:
+      - "5432:5432"
+    volumes:
+      # Persistencia de datos
+      - postgres_data_go:/var/lib/postgresql/data
+      # Scripts de inicialización (reutilizar los existentes)
+      - ../database/init:/docker-entrypoint-initdb.d:ro
+    networks:
+      - gamc_network_go
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gamc_user -d gamc_system"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis Cache y Sesiones
+  redis:
+    image: redis:7-alpine
+    container_name: gamc_redis_go
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass gamc_redis_password_2024
+    environment:
+      TZ: America/La_Paz
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data_go:/data
+    networks:
+      - gamc_network_go
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Backend Golang
+  gamc-backend-go:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: gamc_backend_go
+    restart: unless-stopped
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+      API_PREFIX: /api/v1
+      DATABASE_URL: postgresql://gamc_user:gamc_password_2024@postgres:5432/gamc_system
+      REDIS_URL: redis://:gamc_redis_password_2024@redis:6379/0
+      JWT_SECRET: gamc_jwt_secret_super_secure_2024_key_never_share
+      JWT_REFRESH_SECRET: gamc_jwt_refresh_secret_super_secure_2024_key
+      JWT_EXPIRES_IN: 15m
+      JWT_REFRESH_EXPIRES_IN: 7d
+      CORS_ORIGIN: http://localhost:5173
+      TZ: America/La_Paz
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - gamc_network_go
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "--quiet", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  postgres_data_go:
+    driver: local
+    name: gamc_postgres_data_go
+  redis_data_go:
+    driver: local
+    name: gamc_redis_data_go
+
+networks:
+  gamc_network_go:
+    driver: bridge
+    name: gamc_network_go
