@@ -13,7 +13,7 @@ gamc-backend-go
 
 # Dependencias de Go
 /vendor/
-go.sum
+#go.sum
 
 # Archivos de configuración local
 .env
