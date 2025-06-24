@@ -1,3 +1,4 @@
+// internal/api/routes/routes.go
 package routes
 
 import (
@@ -6,6 +7,7 @@ import (
 	"gamc-backend-go/internal/api/handlers"
 	"gamc-backend-go/internal/api/middleware"
 	"gamc-backend-go/internal/config"
+	"gamc-backend-go/internal/services"
 
 	"github.com/gin-gonic/gin"
 )
@@ -89,61 +91,131 @@ func SetupRoutes(appCtx *config.AppContext) *gin.Engine {
 					authHandler.VerifyToken)
 			}
 		}
-	}
 
-	// ========================================
-	// RUTAS DE ADMINISTRACIÓN (futuras)
-	// ========================================
+		// ========================================
+		// RUTAS DE MENSAJERÍA
+		// ========================================
 
-	admin := apiV1.Group("/admin")
-	admin.Use(middleware.AuthMiddleware(appCtx))
-	admin.Use(middleware.RequireAdmin())
-	{
-		// Rutas de admin se pueden agregar aquí en el futuro
-		admin.GET("/users", func(c *gin.Context) {
-			c.JSON(200, gin.H{"message": "Admin users endpoint - Coming soon"})
-		})
+		// Crear servicios y handlers de mensajería
+		messageService := services.NewMessageService(appCtx.DB)
+		messageHandler := handlers.NewMessageHandler(messageService)
 
-		admin.GET("/stats", func(c *gin.Context) {
-			c.JSON(200, gin.H{"message": "Admin stats endpoint - Coming soon"})
-		})
-	}
+		messages := apiV1.Group("/messages")
+		messages.Use(middleware.AuthMiddleware(appCtx))
+		{
+			// Obtener estadísticas de mensajes
+			messages.GET("/stats", messageHandler.GetMessageStats)
 
-	// ========================================
-	// RUTAS DE MENSAJERÍA (futuras)
-	// ========================================
+			// Obtener tipos y estados de mensajes
+			messages.GET("/types", messageHandler.GetMessageTypes)
+			messages.GET("/statuses", messageHandler.GetMessageStatuses)
 
-	messages := apiV1.Group("/messages")
-	messages.Use(middleware.AuthMiddleware(appCtx))
-	messages.Use(middleware.RequireOutputRole()) // Requiere rol output o superior
-	{
-		// Endpoints de mensajes se pueden agregar aquí
-		messages.GET("/", func(c *gin.Context) {
-			c.JSON(200, gin.H{"message": "Messages endpoint - Coming soon"})
-		})
+			// Listar mensajes con filtros (requiere rol output o superior)
+			messages.GET("/",
+				middleware.RequireOutputRole(),
+				messageHandler.GetMessages)
 
-		// Solo usuarios con rol input pueden crear mensajes
-		messages.POST("/",
-			middleware.RequireInputRole(),
-			func(c *gin.Context) {
-				c.JSON(200, gin.H{"message": "Create message endpoint - Coming soon"})
+			// Crear nuevo mensaje (requiere rol input o superior)
+			messages.POST("/",
+				middleware.RequireInputRole(),
+				messageHandler.CreateMessage)
+
+			// Operaciones con mensajes específicos
+			messageRoutes := messages.Group("/:id")
+			{
+				// Obtener mensaje por ID
+				messageRoutes.GET("", messageHandler.GetMessageByID)
+
+				// Marcar como leído
+				messageRoutes.PUT("/read", messageHandler.MarkAsRead)
+
+				// Actualizar estado (solo unidad receptora o admin)
+				messageRoutes.PUT("/status",
+					middleware.RequireOutputRole(),
+					messageHandler.UpdateMessageStatus)
+
+				// Eliminar mensaje (solo creador o admin)
+				messageRoutes.DELETE("", messageHandler.DeleteMessage)
+			}
+		}
+
+		// ========================================
+		// RUTAS DE ARCHIVOS (futuras - Tarea 4.3)
+		// ========================================
+
+		files := apiV1.Group("/files")
+		files.Use(middleware.AuthMiddleware(appCtx))
+		{
+			files.POST("/upload", func(c *gin.Context) {
+				c.JSON(200, gin.H{
+					"message": "File upload endpoint - Tarea 4.3 pendiente",
+					"status":  "coming_soon",
+				})
 			})
-	}
 
-	// ========================================
-	// RUTAS DE ARCHIVOS (futuras)
-	// ========================================
+			files.GET("/:id", func(c *gin.Context) {
+				c.JSON(200, gin.H{
+					"message": "File download endpoint - Tarea 4.3 pendiente",
+					"status":  "coming_soon",
+				})
+			})
+		}
 
-	files := apiV1.Group("/files")
-	files.Use(middleware.AuthMiddleware(appCtx))
-	{
-		files.POST("/upload", func(c *gin.Context) {
-			c.JSON(200, gin.H{"message": "File upload endpoint - Coming soon"})
-		})
+		// ========================================
+		// RUTAS DE ADMINISTRACIÓN
+		// ========================================
 
-		files.GET("/:id", func(c *gin.Context) {
-			c.JSON(200, gin.H{"message": "File download endpoint - Coming soon"})
-		})
+		admin := apiV1.Group("/admin")
+		admin.Use(middleware.AuthMiddleware(appCtx))
+		admin.Use(middleware.RequireAdmin())
+		{
+			// Gestión de usuarios
+			admin.GET("/users", func(c *gin.Context) {
+				c.JSON(200, gin.H{
+					"message": "Admin users endpoint - Tarea 7.1 pendiente",
+					"status":  "coming_soon",
+				})
+			})
+
+			// Estadísticas del sistema
+			admin.GET("/stats", func(c *gin.Context) {
+				c.JSON(200, gin.H{
+					"message": "Admin stats endpoint - Tarea 6.x pendiente",
+					"status":  "coming_soon",
+				})
+			})
+
+			// Logs de auditoría
+			admin.GET("/audit", func(c *gin.Context) {
+				c.JSON(200, gin.H{
+					"message": "Admin audit endpoint - Tarea 7.3 pendiente",
+					"status":  "coming_soon",
+				})
+			})
+		}
+
+		// ========================================
+		// RUTAS DE NOTIFICACIONES (futuras - Tarea 4.4)
+		// ========================================
+
+		notifications := apiV1.Group("/notifications")
+		notifications.Use(middleware.AuthMiddleware(appCtx))
+		{
+			notifications.GET("/", func(c *gin.Context) {
+				c.JSON(200, gin.H{
+					"message": "Notifications endpoint - Tarea 4.4 pendiente",
+					"status":  "coming_soon",
+				})
+			})
+
+			// WebSocket para notificaciones en tiempo real
+			notifications.GET("/ws", func(c *gin.Context) {
+				c.JSON(200, gin.H{
+					"message": "WebSocket notifications - Tarea 4.4 pendiente",
+					"status":  "coming_soon",
+				})
+			})
+		}
 	}
 
 	// ========================================
@@ -155,7 +227,16 @@ func SetupRoutes(appCtx *config.AppContext) *gin.Engine {
 			"success":   false,
 			"message":   "Endpoint no encontrado",
 			"path":      c.Request.URL.Path,
+			"method":    c.Request.Method,
 			"timestamp": time.Now().Format(time.RFC3339),
+			"available_endpoints": gin.H{
+				"auth":          "/api/v1/auth/*",
+				"messages":      "/api/v1/messages/*",
+				"files":         "/api/v1/files/*",
+				"admin":         "/api/v1/admin/*",
+				"notifications": "/api/v1/notifications/*",
+				"health":        "/health",
+			},
 		})
 	})
 
