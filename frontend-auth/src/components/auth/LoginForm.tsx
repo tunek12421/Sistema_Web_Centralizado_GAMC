@@ -9,10 +9,16 @@ interface FieldValidation {
 interface LoginFormProps {
   onLoginSuccess: (userData: any) => void;
   onBack: () => void;
+  onForgotPassword?: () => void; // ⭐ NUEVO: Callback para ir a forgot password
   fromRegistration?: boolean;
 }
 
-const LoginForm: React.FC<LoginFormProps> = ({ onLoginSuccess, onBack, fromRegistration = false }) => {
+const LoginForm: React.FC<LoginFormProps> = ({ 
+  onLoginSuccess, 
+  onBack, 
+  onForgotPassword, // ⭐ NUEVO
+  fromRegistration = false 
+}) => {
   const [loginData, setLoginData] = useState({ email: '', password: '' });
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
@@ -128,6 +134,13 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLoginSuccess, onBack, fromRegis
     }
   };
 
+  // ⭐ NUEVO: Manejador para forgot password
+  const handleForgotPassword = () => {
+    if (onForgotPassword) {
+      onForgotPassword();
+    }
+  };
+
   // Componente para mostrar validación de campo
   const FieldValidationMessage = ({ validation }: { validation?: FieldValidation }) => {
     if (!validation || validation.type === '') return null;
@@ -220,6 +233,20 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLoginSuccess, onBack, fromRegis
             />
             <FieldValidationMessage validation={loginValidation.password} />
           </div>
+
+          {/* ⭐ NUEVO: Enlace de forgot password */}
+          {onForgotPassword && (
+            <div className="text-right">
+              <button
+                type="button"
+                onClick={handleForgotPassword}
+                className="text-sm text-blue-600 hover:text-blue-800 transition-colors"
+                disabled={loading}
+              >
+                ¿Olvidaste tu contraseña?
+              </button>
+            </div>
+          )}
 
           {message && (
             <div className={`p-3 rounded-lg text-sm border ${

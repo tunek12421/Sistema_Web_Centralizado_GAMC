@@ -89,26 +89,62 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onRegistrationSuccess, onBa
     return { isValid: true, message: '✓ Contraseña segura', type: 'success' };
   };
 
-  // Función para validar nombres
+  // Función mejorada para validar nombres - CORREGIDA
   const validateName = (name: string, fieldName: string): FieldValidation => {
+    // Verificar si el campo está vacío
     if (!name) {
       return { isValid: false, message: `${fieldName} es requerido`, type: 'error' };
     }
     
-    if (name.length < 2) {
+    // NUEVA VALIDACIÓN: Verificar si contiene solo espacios en blanco
+    if (name.trim() === '') {
+      return { isValid: false, message: `${fieldName} no puede contener solo espacios en blanco`, type: 'error' };
+    }
+    
+    // Verificar longitud mínima (después de quitar espacios al inicio y final)
+    const trimmedName = name.trim();
+    if (trimmedName.length < 2) {
       return { isValid: false, message: `${fieldName} debe tener al menos 2 caracteres`, type: 'error' };
     }
     
-    if (name.length > 50) {
+    // Verificar longitud máxima
+    if (trimmedName.length > 50) {
       return { isValid: false, message: `${fieldName} no puede exceder 50 caracteres`, type: 'error' };
     }
     
+    // NUEVA VALIDACIÓN: Verificar que no tenga espacios excesivos (más de un espacio consecutivo)
+    if (/\s{2,}/.test(name)) {
+      return { isValid: false, message: `${fieldName} no puede tener espacios múltiples consecutivos`, type: 'error' };
+    }
+    
+    // NUEVA VALIDACIÓN: Verificar que no empiece o termine con espacios
+    if (name !== trimmedName) {
+      return { isValid: false, message: `${fieldName} no puede empezar o terminar con espacios`, type: 'error' };
+    }
+    
+    // Validar caracteres permitidos (solo letras, acentos y espacios simples)
     const nameRegex = /^[a-zA-ZáéíóúÁÉÍÓÚñÑ\s]+$/;
-    if (!nameRegex.test(name)) {
+    if (!nameRegex.test(trimmedName)) {
       return { isValid: false, message: 'Solo se permiten letras y espacios', type: 'error' };
     }
     
+    // NUEVA VALIDACIÓN: Verificar que no sea solo un carácter repetido
+    if (/^(.)\1+$/.test(trimmedName.replace(/\s/g, ''))) {
+      return { isValid: false, message: `${fieldName} no puede ser solo caracteres repetidos`, type: 'error' };
+    }
+    
     return { isValid: true, message: `✓ ${fieldName} válido`, type: 'success' };
+  };
+
+  // Función mejorada para manejar cambios en campos de nombre
+  const handleNameChange = (value: string, field: 'firstName' | 'lastName') => {
+    // Opcional: limpiar automáticamente espacios múltiples mientras el usuario escribe
+    const cleanedValue = value.replace(/\s{2,}/g, ' '); // Reemplazar múltiples espacios por uno solo
+    
+    setRegisterData({ 
+      ...registerData, 
+      [field]: cleanedValue 
+    });
   };
 
   // Validaciones en tiempo real para registro
@@ -277,7 +313,7 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onRegistrationSuccess, onBa
               <input
                 type="text"
                 value={registerData.firstName}
-                onChange={(e) => setRegisterData({ ...registerData, firstName: e.target.value })}
+                onChange={(e) => handleNameChange(e.target.value, 'firstName')}
                 className={getInputClasses(registerValidation.firstName)}
                 placeholder="Tu nombre"
                 required
@@ -292,7 +328,7 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onRegistrationSuccess, onBa
               <input
                 type="text"
                 value={registerData.lastName}
-                onChange={(e) => setRegisterData({ ...registerData, lastName: e.target.value })}
+                onChange={(e) => handleNameChange(e.target.value, 'lastName')}
                 className={getInputClasses(registerValidation.lastName)}
                 placeholder="Tu apellido"
                 required
