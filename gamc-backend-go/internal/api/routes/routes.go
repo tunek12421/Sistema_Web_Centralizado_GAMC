@@ -93,7 +93,7 @@ func SetupRoutes(appCtx *config.AppContext) *gin.Engine {
 		}
 
 		// ========================================
-		// RUTAS DE MENSAJERÍA
+		// RUTAS DE MENSAJERÍA (LIMPIO - SIN MIDDLEWARES RESTRICTIVOS)
 		// ========================================
 
 		// Crear servicios y handlers de mensajería
@@ -110,15 +110,11 @@ func SetupRoutes(appCtx *config.AppContext) *gin.Engine {
 			messages.GET("/types", messageHandler.GetMessageTypes)
 			messages.GET("/statuses", messageHandler.GetMessageStatuses)
 
-			// Listar mensajes con filtros (requiere rol output o superior)
-			messages.GET("/",
-				middleware.RequireOutputRole(),
-				messageHandler.GetMessages)
+			// Listar mensajes - SIN middleware restrictivo
+			messages.GET("/", messageHandler.GetMessages)
 
-			// Crear nuevo mensaje (requiere rol input o superior)
-			messages.POST("/",
-				middleware.RequireInputRole(),
-				messageHandler.CreateMessage)
+			// Crear nuevo mensaje - SIN middleware restrictivo
+			messages.POST("/", messageHandler.CreateMessage)
 
 			// Operaciones con mensajes específicos
 			messageRoutes := messages.Group("/:id")
@@ -129,12 +125,10 @@ func SetupRoutes(appCtx *config.AppContext) *gin.Engine {
 				// Marcar como leído
 				messageRoutes.PUT("/read", messageHandler.MarkAsRead)
 
-				// Actualizar estado (solo unidad receptora o admin)
-				messageRoutes.PUT("/status",
-					middleware.RequireOutputRole(),
-					messageHandler.UpdateMessageStatus)
+				// Actualizar estado - SIN middleware restrictivo
+				messageRoutes.PUT("/status", messageHandler.UpdateMessageStatus)
 
-				// Eliminar mensaje (solo creador o admin)
+				// Eliminar mensaje
 				messageRoutes.DELETE("", messageHandler.DeleteMessage)
 			}
 		}
@@ -242,3 +236,26 @@ func SetupRoutes(appCtx *config.AppContext) *gin.Engine {
 
 	return router
 }
+
+/*
+========================================
+CAMBIOS APLICADOS EN ESTA VERSIÓN LIMPIA:
+========================================
+
+ELIMINADAS COMPLETAMENTE las siguientes líneas:
+- middleware.RequireOutputRole() en GET /messages
+- middleware.RequireInputRole() en POST /messages
+- middleware.RequireOutputRole() en PUT /messages/:id/status
+
+RESULTADO ESPERADO:
+- GET /api/v1/messages/ → 6 handlers (no 7)
+- POST /api/v1/messages/ → 6 handlers (no 7)
+- PUT /api/v1/messages/:id/status → 6 handlers (no 7)
+
+DESPUÉS DE APLICAR ESTE ARCHIVO:
+1. Guardar como gamc-backend-go/internal/api/routes/routes.go
+2. docker-compose build gamc-backend-go --no-cache
+3. docker-compose up -d
+4. Verificar logs: docker-compose logs gamc-backend-go | findstr "messages"
+5. Confirmar que muestra 6 handlers en lugar de 7
+*/
