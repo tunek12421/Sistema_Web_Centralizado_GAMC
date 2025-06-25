@@ -1,490 +1,400 @@
 // src/utils/tokenValidation.ts
-// Utilidades de validación de tokens para el módulo de reset de contraseña
-// Compatible con los tokens generados por el backend GAMC
+// Utilidades para validación y manejo de tokens de reset de contraseña
+// Incluye extracción de URL, validaciones, timers y persistencia
 
-import { 
-  FieldValidation, 
-  PasswordResetTokenStatus,
-  PasswordResetErrorType,
-  PASSWORD_RESET_CONFIG, 
-  PASSWORD_RESET_MESSAGES 
-} from '../types/passwordReset';
+import { FieldValidation, PASSWORD_RESET_CONFIG, PasswordResetTokenStatus } from '../types/passwordReset';
 
 // ========================================
-// VALIDACIONES DE TOKEN
+// EXTRACCIÓN Y LIMPIEZA DE TOKENS DESDE URL
 // ========================================
 
 /**
- * Validación completa de formato de token
- * El backend genera tokens de 64 caracteres hexadecimales
+ * Extrae el token de reset desde los parámetros de la URL
+ * Busca en: ?token=xxx, #token=xxx, /reset/:token
  */
-export const validateTokenFormat = (token: string): FieldValidation => {
-  // Token vacío
-  if (!token || !token.trim()) {
-    return { 
-      isValid: false, 
-      message: PASSWORD_RESET_MESSAGES.TOKEN_REQUIRED, 
-      type: 'error' 
-    };
-  }
-
-  // Limpiar espacios en blanco
-  const cleanToken = token.trim();
-
-  // Longitud exacta (64 caracteres)
-  if (cleanToken.length !== PASSWORD_RESET_CONFIG.TOKEN_LENGTH) {
-    return { 
-      isValid: false, 
-      message: PASSWORD_RESET_MESSAGES.TOKEN_INVALID_FORMAT, 
-      type: 'error' 
-    };
-  }
-
-  // Solo caracteres hexadecimales válidos
-  if (!PASSWORD_RESET_CONFIG.TOKEN_PATTERN.test(cleanToken)) {
-    return { 
-      isValid: false, 
-      message: 'Token contiene caracteres inválidos (solo 0-9, a-f permitidos)', 
-      type: 'error' 
-    };
-  }
-
-  return { 
-    isValid: true, 
-    message: '✓ Formato de token válido', 
-    type: 'success' 
-  };
-};
-
-/**
- * Validación de token con verificación de estado
- * Incluye checks de expiración y uso previo
- */
-export const validateTokenState = (
-  token: string,
-  expiresAt?: string,
-  usedAt?: string,
-  isActive?: boolean
-): FieldValidation => {
-  // Primero validar formato
-  const formatValidation = validateTokenFormat(token);
-  if (!formatValidation.isValid) {
-    return formatValidation;
-  }
-
-  // Verificar si está activo
-  if (isActive === false) {
-    return { 
-      isValid: false, 
-      message: PASSWORD_RESET_MESSAGES.TOKEN_INVALID, 
-      type: 'error' 
-    };
-  }
-
-  // Verificar si ya fue usado
-  if (usedAt) {
-    return { 
-      isValid: false, 
-      message: PASSWORD_RESET_MESSAGES.TOKEN_USED, 
-      type: 'error' 
-    };
-  }
-
-  // Verificar expiración
-  if (expiresAt) {
-    const expirationTime = new Date(expiresAt).getTime();
-    const currentTime = Date.now();
-    
-    if (currentTime > expirationTime) {
-      return { 
-        isValid: false, 
-        message: PASSWORD_RESET_MESSAGES.TOKEN_EXPIRED, 
-        type: 'error' 
-      };
-    }
-  }
-
-  return { 
-    isValid: true, 
-    message: '✓ Token válido y activo', 
-    type: 'success' 
-  };
-};
-
-// ========================================
-// EXTRACCIÓN DE TOKEN DESDE URL
-// ========================================
-
-/**
- * Extrae token desde parámetros de URL
- * Soporte para diferentes formatos: ?token=... o ?reset=... o hash #token
- */
-export const extractTokenFromURL = (url?: string): string | null => {
-  const currentUrl = url || window.location.href;
-  
+export const extractTokenFromURL = (): string | null => {
   try {
-    const urlObj = new URL(currentUrl);
+    const currentURL = window.location.href;
     
-    // Intentar diferentes parámetros comunes
-    const tokenParams = ['token', 'reset', 'resetToken', 'passwordReset'];
+    // Método 1: Query parameter ?token=xxx
+    const urlParams = new URLSearchParams(window.location.search);
+    const queryToken = urlParams.get('token');
+    if (queryToken && validateTokenFormat(queryToken).isValid) {
+      return queryToken;
+    }
     
-    for (const param of tokenParams) {
-      const token = urlObj.searchParams.get(param);
-      if (token && token.trim()) {
-        return token.trim();
+    // Método 2: Hash parameter #token=xxx
+    if (window.location.hash) {
+      const hashParams = new URLSearchParams(window.location.hash.slice(1));
+      const hashToken = hashParams.get('token');
+      if (hashToken && validateTokenFormat(hashToken).isValid) {
+        return hashToken;
       }
     }
     
-    // Intentar extraer desde hash (fragment)
-    const hash = urlObj.hash.substring(1); // Remove #
-    if (hash && hash.length === PASSWORD_RESET_CONFIG.TOKEN_LENGTH) {
-      const hashValidation = validateTokenFormat(hash);
-      if (hashValidation.isValid) {
-        return hash;
-      }
+    // Método 3: Path parameter /reset/:token
+    const pathMatch = currentURL.match(/\/reset(?:-password)?\/([a-f0-9]{64})/i);
+    if (pathMatch && pathMatch[1]) {
+      return pathMatch[1];
+    }
+    
+    // Método 4: Cualquier secuencia de 64 caracteres hex en la URL
+    const tokenMatch = currentURL.match(/[a-f0-9]{64}/i);
+    if (tokenMatch) {
+      return tokenMatch[0];
     }
     
     return null;
   } catch (error) {
-    console.warn('Error al extraer token desde URL:', error);
+    console.error('Error extracting token from URL:', error);
     return null;
   }
 };
 
 /**
- * Extrae token desde localStorage (backup/cache)
- * Útil para recuperar tokens temporalmente almacenados
- */
-export const extractTokenFromStorage = (key: string = 'passwordResetToken'): string | null => {
-  try {
-    const storedToken = localStorage.getItem(key);
-    if (storedToken) {
-      const validation = validateTokenFormat(storedToken);
-      return validation.isValid ? storedToken : null;
-    }
-    return null;
-  } catch (error) {
-    console.warn('Error al extraer token desde localStorage:', error);
-    return null;
-  }
-};
-
-/**
- * Limpia token de URL para mejorar seguridad
- * Remueve el token de la URL visible sin recargar la página
+ * Limpia el token de la URL sin recargar la página
+ * Útil después de procesar el token exitosamente
  */
 export const cleanTokenFromURL = (): void => {
   try {
     const url = new URL(window.location.href);
-    const tokenParams = ['token', 'reset', 'resetToken', 'passwordReset'];
-    let hasChanges = false;
     
-    // Remover parámetros de token
-    for (const param of tokenParams) {
-      if (url.searchParams.has(param)) {
-        url.searchParams.delete(param);
-        hasChanges = true;
-      }
+    // Limpiar query parameter
+    url.searchParams.delete('token');
+    
+    // Limpiar hash si es necesario
+    if (url.hash.includes('token=')) {
+      const hashParams = new URLSearchParams(url.hash.slice(1));
+      hashParams.delete('token');
+      url.hash = hashParams.toString();
     }
     
-    // Remover hash si parece ser un token
-    if (url.hash && url.hash.length === PASSWORD_RESET_CONFIG.TOKEN_LENGTH + 1) {
-      url.hash = '';
-      hasChanges = true;
-    }
-    
-    // Actualizar URL si hubo cambios
-    if (hasChanges) {
-      window.history.replaceState({}, '', url.toString());
-    }
+    // Actualizar URL sin recargar
+    window.history.replaceState({}, document.title, url.toString());
   } catch (error) {
-    console.warn('Error al limpiar token de URL:', error);
+    console.error('Error cleaning token from URL:', error);
   }
 };
 
 // ========================================
-// UTILIDADES DE ESTADO DE TOKEN
+// VALIDACIONES DE FORMATO Y ESTADO
 // ========================================
 
 /**
- * Determina el estado actual de un token
+ * Valida el formato básico de un token de reset
+ * Verifica longitud y caracteres hexadecimales
  */
-export const getTokenStatus = (
-  token: string,
-  expiresAt?: string,
-  usedAt?: string,
-  isActive?: boolean
-): PasswordResetTokenStatus => {
-  const formatValidation = validateTokenFormat(token);
-  if (!formatValidation.isValid) {
-    return PasswordResetTokenStatus.INVALID;
+export const validateTokenFormat = (token: string): FieldValidation => {
+  if (!token || typeof token !== 'string') {
+    return {
+      isValid: false,
+      message: 'Token es requerido',
+      type: 'error'
+    };
   }
-
-  if (isActive === false) {
-    return PasswordResetTokenStatus.INVALID;
+  
+  const trimmedToken = token.trim();
+  
+  if (trimmedToken.length === 0) {
+    return {
+      isValid: false,
+      message: 'Token no puede estar vacío',
+      type: 'error'
+    };
   }
-
-  if (usedAt) {
-    return PasswordResetTokenStatus.USED;
+  
+  if (trimmedToken.length !== PASSWORD_RESET_CONFIG.TOKEN_LENGTH) {
+    return {
+      isValid: false,
+      message: `Token debe tener exactamente ${PASSWORD_RESET_CONFIG.TOKEN_LENGTH} caracteres`,
+      type: 'error'
+    };
   }
-
-  if (expiresAt) {
-    const expirationTime = new Date(expiresAt).getTime();
-    const currentTime = Date.now();
-    
-    if (currentTime > expirationTime) {
-      return PasswordResetTokenStatus.EXPIRED;
-    }
+  
+  if (!PASSWORD_RESET_CONFIG.TOKEN_PATTERN.test(trimmedToken)) {
+    return {
+      isValid: false,
+      message: 'Token contiene caracteres inválidos. Solo se permiten números y letras a-f',
+      type: 'error'
+    };
   }
-
-  return PasswordResetTokenStatus.ACTIVE;
+  
+  return {
+    isValid: true,
+    message: '✓ Formato de token válido',
+    type: 'success'
+  };
 };
 
 /**
- * Calcula tiempo restante hasta expiración
+ * Valida el estado de un token (si está activo, expirado, usado, etc.)
+ * Esta función haría una llamada al backend para verificar estado
  */
-export const getTokenTimeRemaining = (expiresAt: string): number => {
+export const validateTokenState = async (token: string): Promise<FieldValidation & { status: PasswordResetTokenStatus }> => {
   try {
-    const expirationTime = new Date(expiresAt).getTime();
-    const currentTime = Date.now();
-    const remaining = expirationTime - currentTime;
+    // Primero validar formato
+    const formatValidation = validateTokenFormat(token);
+    if (!formatValidation.isValid) {
+      return {
+        ...formatValidation,
+        status: PasswordResetTokenStatus.INVALID
+      };
+    }
     
-    return Math.max(0, Math.ceil(remaining / 1000)); // segundos
+    // TODO: Implementar llamada al backend para verificar estado
+    // const response = await apiClient.get(`/auth/reset-status/${token}`);
+    
+    // Por ahora, simular validación básica
+    // En implementación real, esto vendría del backend
+    const now = Date.now();
+    const storedExpiry = getStoredTokenExpiry(token);
+    
+    if (storedExpiry && now > storedExpiry) {
+      return {
+        isValid: false,
+        message: 'Token ha expirado. Solicite un nuevo reset de contraseña',
+        type: 'error',
+        status: PasswordResetTokenStatus.EXPIRED
+      };
+    }
+    
+    return {
+      isValid: true,
+      message: '✓ Token válido y activo',
+      type: 'success',
+      status: PasswordResetTokenStatus.ACTIVE
+    };
+    
   } catch (error) {
-    console.warn('Error al calcular tiempo restante:', error);
+    console.error('Error validating token state:', error);
+    return {
+      isValid: false,
+      message: 'Error al verificar token. Intente nuevamente',
+      type: 'error',
+      status: PasswordResetTokenStatus.INVALID
+    };
+  }
+};
+
+// ========================================
+// MANEJO DE TIEMPO Y EXPIRACIÓN
+// ========================================
+
+/**
+ * Calcula tiempo restante hasta que expire un token
+ * Retorna tiempo en milisegundos, 0 si ya expiró
+ */
+export const getTokenTimeRemaining = (tokenOrExpiry: string | number): number => {
+  try {
+    let expiryTime: number;
+    
+    if (typeof tokenOrExpiry === 'string') {
+      // Es un token, buscar su tiempo de expiración
+      expiryTime = getStoredTokenExpiry(tokenOrExpiry) || 0;
+    } else {
+      // Es un timestamp de expiración
+      expiryTime = tokenOrExpiry;
+    }
+    
+    if (!expiryTime) return 0;
+    
+    const now = Date.now();
+    const remaining = expiryTime - now;
+    
+    return Math.max(0, remaining);
+  } catch (error) {
+    console.error('Error calculating token time remaining:', error);
     return 0;
   }
 };
 
 /**
  * Formatea tiempo restante en formato legible
+ * Ej: "25 minutos 30 segundos", "5 minutos", "30 segundos"
  */
-export const formatTokenTimeRemaining = (seconds: number): string => {
-  if (seconds <= 0) return 'Expirado';
+export const formatTokenTimeRemaining = (timeMs: number): string => {
+  if (timeMs <= 0) return 'Expirado';
   
-  const minutes = Math.floor(seconds / 60);
-  const remainingSeconds = seconds % 60;
+  const totalSeconds = Math.floor(timeMs / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
   
   if (minutes > 0) {
-    return `${minutes}:${remainingSeconds.toString().padStart(2, '0')} min`;
+    if (seconds > 0) {
+      return `${minutes} ${minutes === 1 ? 'minuto' : 'minutos'} ${seconds} ${seconds === 1 ? 'segundo' : 'segundos'}`;
+    }
+    return `${minutes} ${minutes === 1 ? 'minuto' : 'minutos'}`;
   }
   
-  return `${remainingSeconds}s`;
+  return `${seconds} ${seconds === 1 ? 'segundo' : 'segundos'}`;
 };
 
 /**
- * Verifica si un token está próximo a expirar (menos de 5 minutos)
+ * Verifica si un token está cerca de expirar (< 5 minutos restantes)
  */
-export const isTokenNearExpiration = (expiresAt: string, thresholdMinutes: number = 5): boolean => {
-  const remainingSeconds = getTokenTimeRemaining(expiresAt);
-  return remainingSeconds > 0 && remainingSeconds <= (thresholdMinutes * 60);
+export const isTokenNearExpiration = (tokenOrExpiry: string | number, warningThresholdMs: number = 5 * 60 * 1000): boolean => {
+  const timeRemaining = getTokenTimeRemaining(tokenOrExpiry);
+  return timeRemaining > 0 && timeRemaining <= warningThresholdMs;
 };
 
 // ========================================
-// GENERACIÓN DE ENLACES DE RESET
+// PERSISTENCIA LOCAL (sessionStorage)
 // ========================================
 
-/**
- * Genera URL completa para reset de contraseña
- * Útil para testing o visualización
- */
-export const generateResetURL = (
-  token: string, 
-  baseUrl?: string, 
-  useHash?: boolean
-): string => {
-  const base = baseUrl || window.location.origin;
-  const resetPath = '/reset-password';
-  
-  if (useHash) {
-    return `${base}${resetPath}#${token}`;
-  } else {
-    return `${base}${resetPath}?token=${token}`;
-  }
-};
+const TOKEN_STORAGE_KEY = 'gamc_reset_token';
+const TOKEN_EXPIRY_KEY = 'gamc_reset_token_expiry';
 
 /**
- * Valida si una URL contiene un token de reset válido
+ * Almacena token y su tiempo de expiración en sessionStorage
+ * Útil para mantener estado durante navegación
  */
-export const validateResetURL = (url: string): { isValid: boolean; token?: string; error?: string } => {
+export const storeToken = (token: string, expiryMs?: number): void => {
   try {
-    const urlObj = new URL(url);
-    const token = extractTokenFromURL(url);
-    
-    if (!token) {
-      return { 
-        isValid: false, 
-        error: 'No se encontró token en la URL' 
-      };
+    if (!validateTokenFormat(token).isValid) {
+      throw new Error('Invalid token format');
     }
     
-    const validation = validateTokenFormat(token);
-    if (!validation.isValid) {
-      return { 
-        isValid: false, 
-        error: validation.message 
-      };
-    }
+    sessionStorage.setItem(TOKEN_STORAGE_KEY, token);
     
-    return { 
-      isValid: true, 
-      token 
-    };
+    if (expiryMs) {
+      sessionStorage.setItem(TOKEN_EXPIRY_KEY, expiryMs.toString());
+    } else {
+      // Default: 30 minutos desde ahora
+      const defaultExpiry = Date.now() + PASSWORD_RESET_CONFIG.TOKEN_EXPIRY;
+      sessionStorage.setItem(TOKEN_EXPIRY_KEY, defaultExpiry.toString());
+    }
   } catch (error) {
-    return { 
-      isValid: false, 
-      error: 'URL inválida' 
-    };
+    console.error('Error storing token:', error);
   }
 };
 
-// ========================================
-// GESTIÓN DE TOKENS EN LOCALSTORAGE
-// ========================================
-
 /**
- * Guarda token temporalmente en localStorage
- * Útil para persistir token entre navegación
+ * Recupera token almacenado desde sessionStorage
+ * Retorna null si no existe o ha expirado
  */
-export const storeToken = (
-  token: string, 
-  expiresAt?: string, 
-  key: string = 'passwordResetToken'
-): boolean => {
+export const retrieveStoredToken = (): string | null => {
   try {
-    const validation = validateTokenFormat(token);
-    if (!validation.isValid) {
-      console.warn('Intento de guardar token inválido:', validation.message);
-      return false;
+    const token = sessionStorage.getItem(TOKEN_STORAGE_KEY);
+    if (!token) return null;
+    
+    const expiry = sessionStorage.getItem(TOKEN_EXPIRY_KEY);
+    if (expiry && Date.now() > parseInt(expiry)) {
+      // Token expirado, limpiar storage
+      clearStoredToken();
+      return null;
     }
     
-    const tokenData = {
-      token,
-      expiresAt,
-      storedAt: new Date().toISOString()
-    };
-    
-    localStorage.setItem(key, JSON.stringify(tokenData));
-    return true;
+    return token;
   } catch (error) {
-    console.error('Error al guardar token:', error);
-    return false;
+    console.error('Error retrieving stored token:', error);
+    return null;
   }
 };
 
 /**
- * Recupera token desde localStorage con validación
+ * Obtiene tiempo de expiración de un token almacenado
  */
-export const retrieveStoredToken = (key: string = 'passwordResetToken'): {
-  token?: string;
-  expiresAt?: string;
-  isValid: boolean;
-  error?: string;
-} => {
+export const getStoredTokenExpiry = (token?: string): number | null => {
   try {
-    const storedData = localStorage.getItem(key);
-    if (!storedData) {
-      return { isValid: false, error: 'No hay token almacenado' };
-    }
+    const storedToken = sessionStorage.getItem(TOKEN_STORAGE_KEY);
+    if (token && storedToken !== token) return null;
     
-    const tokenData = JSON.parse(storedData);
-    const { token, expiresAt } = tokenData;
-    
-    if (!token) {
-      return { isValid: false, error: 'Token faltante en datos almacenados' };
-    }
-    
-    const validation = validateTokenState(token, expiresAt);
-    if (!validation.isValid) {
-      // Limpiar token inválido
-      clearStoredToken(key);
-      return { isValid: false, error: validation.message };
-    }
-    
-    return { token, expiresAt, isValid: true };
+    const expiry = sessionStorage.getItem(TOKEN_EXPIRY_KEY);
+    return expiry ? parseInt(expiry) : null;
   } catch (error) {
-    console.error('Error al recuperar token almacenado:', error);
-    clearStoredToken(key);
-    return { isValid: false, error: 'Error al leer token almacenado' };
+    console.error('Error getting stored token expiry:', error);
+    return null;
   }
 };
 
 /**
- * Limpia token de localStorage
+ * Limpia token almacenado del sessionStorage
  */
-export const clearStoredToken = (key: string = 'passwordResetToken'): void => {
+export const clearStoredToken = (): void => {
   try {
-    localStorage.removeItem(key);
+    sessionStorage.removeItem(TOKEN_STORAGE_KEY);
+    sessionStorage.removeItem(TOKEN_EXPIRY_KEY);
   } catch (error) {
-    console.warn('Error al limpiar token almacenado:', error);
+    console.error('Error clearing stored token:', error);
   }
 };
 
 // ========================================
-// UTILIDADES DE DEBUGGING
+// UTILIDADES DE TIMERS PARA COMPONENTES
 // ========================================
 
 /**
- * Función de debugging para analizar tokens
- * Solo disponible en desarrollo
+ * Crea un timer que ejecuta callback cada segundo con tiempo restante
+ * Útil para countdown en UI
  */
-export const debugToken = (token: string): void => {
-  if (process.env.NODE_ENV !== 'development') return;
+export const createTokenTimer = (
+  tokenOrExpiry: string | number,
+  onTick: (timeRemaining: number, formatted: string) => void,
+  onExpired?: () => void
+): { stop: () => void; getTimeRemaining: () => number } => {
+  let intervalId: NodeJS.Timeout | null = null;
   
-  console.group('🔍 Debug Token Analysis');
-  console.log('Token:', token);
-  console.log('Length:', token.length);
-  console.log('Format Valid:', validateTokenFormat(token));
-  console.log('Pattern Match:', PASSWORD_RESET_CONFIG.TOKEN_PATTERN.test(token));
-  console.log('Hex Characters:', /^[a-f0-9]+$/i.test(token));
-  console.groupEnd();
+  const tick = () => {
+    const timeRemaining = getTokenTimeRemaining(tokenOrExpiry);
+    const formatted = formatTokenTimeRemaining(timeRemaining);
+    
+    onTick(timeRemaining, formatted);
+    
+    if (timeRemaining <= 0) {
+      stop();
+      if (onExpired) onExpired();
+    }
+  };
+  
+  const start = () => {
+    // Ejecutar inmediatamente
+    tick();
+    // Después cada segundo
+    intervalId = setInterval(tick, 1000);
+  };
+  
+  const stop = () => {
+    if (intervalId) {
+      clearInterval(intervalId);
+      intervalId = null;
+    }
+  };
+  
+  const getTimeRemaining = () => getTokenTimeRemaining(tokenOrExpiry);
+  
+  // Iniciar automáticamente
+  start();
+  
+  return { stop, getTimeRemaining };
+};
+
+// ========================================
+// HELPERS DE URL PARA DIFERENTES FLUJOS
+// ========================================
+
+/**
+ * Genera URL para reset de contraseña con token
+ */
+export const generateResetURL = (token: string, baseURL?: string): string => {
+  const base = baseURL || window.location.origin;
+  return `${base}/reset-password?token=${token}`;
 };
 
 /**
- * Genera token de prueba para desarrollo
- * Solo disponible en desarrollo
+ * Genera URL para solicitar nuevo reset
  */
-export const generateTestToken = (): string => {
-  if (process.env.NODE_ENV !== 'development') {
-    throw new Error('generateTestToken solo disponible en desarrollo');
-  }
-  
-  // Generar 64 caracteres hexadecimales aleatorios
-  return Array.from({ length: 64 }, () => 
-    Math.floor(Math.random() * 16).toString(16)
-  ).join('');
+export const generateForgotPasswordURL = (baseURL?: string): string => {
+  const base = baseURL || window.location.origin;
+  return `${base}/forgot-password`;
 };
 
-// ========================================
-// EXPORT POR DEFECTO
-// ========================================
-
-export default {
-  // Validaciones principales
-  validateTokenFormat,
-  validateTokenState,
-  
-  // Extracción de tokens
-  extractTokenFromURL,
-  extractTokenFromStorage,
-  cleanTokenFromURL,
-  
-  // Estado y tiempo
-  getTokenStatus,
-  getTokenTimeRemaining,
-  formatTokenTimeRemaining,
-  isTokenNearExpiration,
-  
-  // URLs y enlaces
-  generateResetURL,
-  validateResetURL,
-  
-  // Gestión de almacenamiento
-  storeToken,
-  retrieveStoredToken,
-  clearStoredToken,
-  
-  // Debugging (desarrollo)
-  debugToken,
-  generateTestToken
+/**
+ * Valida si la URL actual corresponde a un flujo de reset
+ */
+export const isResetPasswordURL = (): boolean => {
+  const pathname = window.location.pathname;
+  return pathname.includes('/reset') || 
+         pathname.includes('/forgot') ||
+         window.location.search.includes('token=') ||
+         window.location.hash.includes('token=');
 };

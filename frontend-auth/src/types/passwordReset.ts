@@ -2,7 +2,7 @@
 // Interfaces TypeScript para el módulo de reset de contraseña
 // Compatible con el backend GAMC y reutiliza tipos existentes
 
-import { ApiResponse } from './auth';
+import { ApiResponse, FieldValidation } from './auth';
 
 // ========================================
 // INTERFACES PRINCIPALES DE RESET
@@ -138,16 +138,6 @@ export enum PasswordResetErrorType {
 // ========================================
 
 /**
- * Estado de validación de campo en tiempo real
- * Usada en: ForgotPasswordForm, ResetPasswordForm
- */
-export interface FieldValidation {
-  isValid: boolean;
-  message: string;
-  type: 'success' | 'error' | 'warning' | '';
-}
-
-/**
  * Estado del formulario de solicitud de reset
  * Usada en: ForgotPasswordForm, usePasswordReset hook
  */
@@ -234,6 +224,21 @@ export interface UsePasswordResetResult {
 }
 
 // ========================================
+// CLASES DE ERROR PERSONALIZADAS
+// ========================================
+
+export class PasswordResetError extends Error {
+  constructor(
+    public type: PasswordResetErrorType,
+    message: string,
+    public details?: any
+  ) {
+    super(message);
+    this.name = 'PasswordResetError';
+  }
+}
+
+// ========================================
 // CONFIGURACIÓN Y CONSTANTES
 // ========================================
 
@@ -258,42 +263,84 @@ export const PASSWORD_RESET_CONFIG = {
   // Regex patterns
   EMAIL_PATTERN: /^[^\s@]+@gamc\.gov\.bo$/,
   TOKEN_PATTERN: /^[a-f0-9]{64}$/i,
-  PASSWORD_PATTERN: /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]/
+  PASSWORD_PATTERN: /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/,
+  
+  // Mensajes de error
+  ERROR_MESSAGES: {
+    [PasswordResetErrorType.EMAIL_NOT_INSTITUTIONAL]: 'Solo emails @gamc.gov.bo pueden solicitar reset',
+    [PasswordResetErrorType.RATE_LIMIT_EXCEEDED]: 'Debe esperar 5 minutos entre solicitudes',
+    [PasswordResetErrorType.TOKEN_INVALID]: 'Token de reset inválido',
+    [PasswordResetErrorType.TOKEN_EXPIRED]: 'Token de reset expirado',
+    [PasswordResetErrorType.TOKEN_USED]: 'Token ya utilizado',
+    [PasswordResetErrorType.PASSWORD_WEAK]: 'Contraseña no cumple requisitos',
+    [PasswordResetErrorType.NETWORK_ERROR]: 'Error de conexión',
+    [PasswordResetErrorType.SERVER_ERROR]: 'Error del servidor',
+    [PasswordResetErrorType.VALIDATION_ERROR]: 'Error de validación'
+  }
 } as const;
 
+// ========================================
+// UTILIDADES Y HELPERS
+// ========================================
+
 /**
- * Mensajes de error predefinidos para consistencia en UI
+ * Verifica si un string es un token válido
  */
-export const PASSWORD_RESET_MESSAGES = {
-  // Solicitud de reset
-  EMAIL_REQUIRED: 'El email es requerido',
-  EMAIL_INVALID_FORMAT: 'Formato de email inválido',
-  EMAIL_NOT_INSTITUTIONAL: 'Solo emails @gamc.gov.bo pueden solicitar reset',
-  RATE_LIMIT_EXCEEDED: 'Debe esperar 5 minutos entre solicitudes',
-  REQUEST_SUCCESS: 'Si el email existe, recibirás un enlace de reset',
-  
-  // Confirmación de reset
-  TOKEN_REQUIRED: 'El token es requerido',
-  TOKEN_INVALID_FORMAT: 'Token debe tener exactamente 64 caracteres',
-  TOKEN_EXPIRED: 'El token ha expirado. Solicite un nuevo reset',
-  TOKEN_USED: 'Este token ya fue utilizado',
-  TOKEN_INVALID: 'Token inválido',
-  
-  // Contraseña
-  PASSWORD_REQUIRED: 'La nueva contraseña es requerida',
-  PASSWORD_TOO_SHORT: 'Mínimo 8 caracteres',
-  PASSWORD_MISSING_UPPERCASE: 'Debe contener al menos una mayúscula',
-  PASSWORD_MISSING_LOWERCASE: 'Debe contener al menos una minúscula',
-  PASSWORD_MISSING_NUMBER: 'Debe contener al menos un número',
-  PASSWORD_MISSING_SPECIAL: 'Debe contener al menos un símbolo (@$!%*?&)',
-  PASSWORD_CONFIRM_MISMATCH: 'Las contraseñas no coinciden',
-  
-  // Éxito
-  RESET_SUCCESS: 'Contraseña cambiada exitosamente',
-  REDIRECT_MESSAGE: 'Redirigiendo al login...',
-  
-  // Errores generales
-  NETWORK_ERROR: 'Error de conexión. Verifique su conexión a internet',
-  SERVER_ERROR: 'Error del servidor. Intente nuevamente',
-  UNKNOWN_ERROR: 'Error inesperado. Contacte al soporte técnico'
-} as const;
+export const isValidResetToken = (token: string): boolean => {
+  return typeof token === 'string' && 
+         token.length === PASSWORD_RESET_CONFIG.TOKEN_LENGTH &&
+         PASSWORD_RESET_CONFIG.TOKEN_PATTERN.test(token);
+};
+
+/**
+ * Obtiene el mensaje de error apropiado para un tipo de error
+ */
+export const getPasswordResetErrorMessage = (type: PasswordResetErrorType): string => {
+  return PASSWORD_RESET_CONFIG.ERROR_MESSAGES[type] || 'Error desconocido';
+};
+
+/**
+ * Valida un email para reset de contraseña
+ */
+export const validateResetEmail = (email: string): FieldValidation => {
+  if (!email || !email.trim()) {
+    return {
+      isValid: false,
+      message: 'Email es requerido',
+      type: 'error'
+    };
+  }
+
+  if (!PASSWORD_RESET_CONFIG.EMAIL_PATTERN.test(email.trim())) {
+    return {
+      isValid: false,
+      message: 'Solo emails @gamc.gov.bo pueden solicitar reset',
+      type: 'error'
+    };
+  }
+
+  return {
+    isValid: true,
+    message: '✓ Email válido',
+    type: 'success'
+  };
+};
+
+/**
+ * Calcula tiempo restante para rate limiting
+ */
+export const getRateLimitTimeRemaining = (): number => {
+  try {
+    const lastRequest = localStorage.getItem('gamc_last_reset_request');
+    if (!lastRequest) return 0;
+    
+    const lastRequestTime = parseInt(lastRequest);
+    const now = Date.now();
+    const timeElapsed = now - lastRequestTime;
+    const cooldownTime = PASSWORD_RESET_CONFIG.RATE_LIMIT_WINDOW;
+    
+    return Math.max(0, cooldownTime - timeElapsed);
+  } catch {
+    return 0;
+  }
+};

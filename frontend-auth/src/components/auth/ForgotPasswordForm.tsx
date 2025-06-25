@@ -1,41 +1,38 @@
 // src/components/auth/ForgotPasswordForm.tsx
-// Componente para solicitar reset de contraseña
-// Integrado con el sistema de validación y estilos existentes
+// Formulario principal para solicitar reset de contraseña
+// Incluye validación email, rate limiting UI y manejo de preguntas de seguridad
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { passwordResetService, PasswordResetError } from '../../services/passwordResetService';
-import { 
-  validateEmail, 
-  getInputClasses, 
-  getValidationMessageClasses,
-  canMakePasswordResetRequest,
-  getTimeUntilNextRequest,
-  recordPasswordResetRequest,
-  formatTimeRemaining
-} from '../../utils/passwordValidation';
-import { 
-  FieldValidation, 
-  PasswordResetErrorType,
-  PASSWORD_RESET_MESSAGES 
-} from '../../types/passwordReset';
+import { validateEmail, getInputClasses, getValidationMessageClasses } from '../../utils/passwordValidation';
+import { FieldValidation, PasswordResetErrorType, PASSWORD_RESET_CONFIG } from '../../types/passwordReset';
 
 interface ForgotPasswordFormProps {
-  onSuccess?: (email: string) => void;
-  onBack?: () => void;
+  onSuccess?: (email: string, requiresSecurityQuestion: boolean, securityQuestion?: any) => void;
   onError?: (error: PasswordResetError) => void;
+  onBack?: () => void;
+  onLoginRedirect?: () => void;
+  initialEmail?: string;
+  autoFocus?: boolean;
 }
 
-const ForgotPasswordForm: React.FC<ForgotPasswordFormProps> = ({ 
-  onSuccess, 
-  onBack, 
-  onError 
+const ForgotPasswordForm: React.FC<ForgotPasswordFormProps> = ({
+  onSuccess,
+  onError,
+  onBack,
+  onLoginRedirect,
+  initialEmail = '',
+  autoFocus = true
 }) => {
+  // Referencias para DOM
+  const emailInputRef = useRef<HTMLInputElement>(null);
+
   // Estados del formulario
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(initialEmail);
   const [isLoading, setIsLoading] = useState(false);
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [message, setMessage] = useState('');
-  const [messageType, setMessageType] = useState<'success' | 'error' | 'info' | ''>('');
+  const [messageType, setMessageType] = useState<'success' | 'error' | 'warning' | ''>('');
 
   // Estados de validación
   const [emailValidation, setEmailValidation] = useState<FieldValidation>({
@@ -44,177 +41,271 @@ const ForgotPasswordForm: React.FC<ForgotPasswordFormProps> = ({
     type: ''
   });
 
-  // Rate limiting
-  const [canSubmit, setCanSubmit] = useState(true);
-  const [timeRemaining, setTimeRemaining] = useState(0);
+  // Estados de rate limiting
+  const [isRateLimited, setIsRateLimited] = useState(false);
+  const [timeUntilNextRequest, setTimeUntilNextRequest] = useState(0);
+  const [lastSubmissionTime, setLastSubmissionTime] = useState<number | null>(null);
 
   // ========================================
-  // EFECTOS Y VALIDACIONES
+  // EFECTOS Y INICIALIZACIÓN
   // ========================================
 
-  // Validación en tiempo real del email
+  // Auto-focus en el campo email
   useEffect(() => {
-    if (email.trim()) {
-      const validation = validateEmail(email);
-      setEmailValidation(validation);
-    } else {
-      setEmailValidation({ isValid: false, message: '', type: '' });
+    if (autoFocus && emailInputRef.current) {
+      emailInputRef.current.focus();
     }
-  }, [email]);
+  }, [autoFocus]);
+
+  // Validar email inicial si se proporciona
+  useEffect(() => {
+    if (initialEmail) {
+      const validation = validateEmail(initialEmail);
+      setEmailValidation(validation);
+    }
+  }, [initialEmail]);
 
   // Timer para rate limiting
   useEffect(() => {
-    const updateRateLimit = () => {
-      const canRequest = canMakePasswordResetRequest();
-      const remaining = getTimeUntilNextRequest();
-      
-      setCanSubmit(canRequest);
-      setTimeRemaining(remaining);
-    };
+    if (timeUntilNextRequest > 0) {
+      const timer = setInterval(() => {
+        setTimeUntilNextRequest(prev => {
+          const newTime = prev - 1;
+          if (newTime <= 0) {
+            setIsRateLimited(false);
+            return 0;
+          }
+          return newTime;
+        });
+      }, 1000);
 
-    // Actualizar inmediatamente
-    updateRateLimit();
+      return () => clearInterval(timer);
+    }
+  }, [timeUntilNextRequest]);
 
-    // Actualizar cada segundo si hay rate limit activo
-    const interval = setInterval(updateRateLimit, 1000);
-
-    return () => clearInterval(interval);
+  // Verificar rate limit al cargar
+  useEffect(() => {
+    checkRateLimit();
   }, []);
 
   // ========================================
-  // MANEJADORES DE EVENTOS
+  // HANDLERS Y VALIDACIONES
   // ========================================
 
+  /**
+   * Maneja cambios en el campo email
+   */
   const handleEmailChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newEmail = e.target.value;
     setEmail(newEmail);
     
-    // Limpiar mensaje cuando el usuario empiece a escribir
-    if (message && !isLoading) {
+    // Validar en tiempo real
+    const validation = validateEmail(newEmail);
+    setEmailValidation(validation);
+    
+    // Limpiar mensajes previos
+    if (message) {
       setMessage('');
       setMessageType('');
     }
   };
 
+  /**
+   * Verifica rate limit desde localStorage
+   */
+  const checkRateLimit = () => {
+    try {
+      const lastRequestStr = localStorage.getItem('gamc_last_reset_request');
+      if (lastRequestStr) {
+        const lastRequestTime = parseInt(lastRequestStr);
+        const now = Date.now();
+        const timeSinceLastRequest = now - lastRequestTime;
+        const cooldownTime = PASSWORD_RESET_CONFIG.RATE_LIMIT_WINDOW;
+
+        if (timeSinceLastRequest < cooldownTime) {
+          const remainingTime = Math.ceil((cooldownTime - timeSinceLastRequest) / 1000);
+          setIsRateLimited(true);
+          setTimeUntilNextRequest(remainingTime);
+          setLastSubmissionTime(lastRequestTime);
+        }
+      }
+    } catch (error) {
+      console.error('Error checking rate limit:', error);
+    }
+  };
+
+  /**
+   * Registra nueva solicitud para rate limiting
+   */
+  const recordRateLimit = () => {
+    try {
+      const now = Date.now();
+      localStorage.setItem('gamc_last_reset_request', now.toString());
+      setLastSubmissionTime(now);
+      setIsRateLimited(true);
+      setTimeUntilNextRequest(300); // 5 minutos = 300 segundos
+    } catch (error) {
+      console.error('Error recording rate limit:', error);
+    }
+  };
+
+  /**
+   * Maneja envío del formulario
+   */
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    // Validaciones pre-envío
-    if (!canSubmit) {
-      setMessage(`⏰ Debe esperar ${formatTimeRemaining(timeRemaining)} antes de hacer otra solicitud`);
-      setMessageType('error');
-      return;
-    }
-
-    if (!emailValidation.isValid) {
-      setMessage('❌ Complete el email correctamente antes de continuar');
-      setMessageType('error');
-      return;
-    }
+    // Prevenir doble envío
+    if (isLoading || isRateLimited) return;
 
     setIsLoading(true);
     setMessage('');
     setMessageType('');
 
     try {
-      // Validación adicional del servicio
-      const validation = passwordResetService.validateEmailForReset(email);
+      // Validar email final
+      const validation = validateEmail(email);
+      setEmailValidation(validation);
+
       if (!validation.isValid) {
-        throw new PasswordResetError(
-          PasswordResetErrorType.EMAIL_NOT_INSTITUTIONAL,
-          validation.error || 'Email inválido'
-        );
+        setMessage(validation.message);
+        setMessageType('error');
+        return;
       }
 
-      // Enviar solicitud de reset
-      const response = await passwordResetService.requestPasswordReset({ email: email.trim() });
-
+      // Realizar solicitud de reset
+      const result = await passwordResetService.requestPasswordReset({ email: email.trim() });
+      
       // Registrar solicitud para rate limiting
-      recordPasswordResetRequest();
-      passwordResetService.recordResetRequest();
-
-      // Mostrar mensaje de éxito
-      setMessage('✅ ' + response.data.message);
-      setMessageType('success');
+      recordRateLimit();
+      
+      // Marcar como enviado
       setIsSubmitted(true);
-
-      // Limpiar formulario
-      setEmail('');
-      setEmailValidation({ isValid: false, message: '', type: '' });
+      
+      // Mostrar mensaje de éxito
+      setMessage('✅ ' + (result.message || 'Si el email existe, recibirá instrucciones para restablecer su contraseña'));
+      setMessageType('success');
 
       // Callback de éxito
       if (onSuccess) {
-        setTimeout(() => onSuccess(email.trim()), 2000);
+        onSuccess(
+          email.trim(),
+          result.requiresSecurityQuestion || false,
+          result.securityQuestion
+        );
       }
 
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error en solicitud de reset:', error);
       
-      let errorMessage = 'Error inesperado';
-      let errorType = PasswordResetErrorType.UNKNOWN_ERROR;
+      let errorMessage = 'Error al procesar solicitud';
+      let errorType: PasswordResetErrorType = PasswordResetErrorType.SERVER_ERROR;
 
       if (error instanceof PasswordResetError) {
-        errorMessage = error.getUserMessage();
-        errorType = error.type;
-      } else if (error instanceof Error) {
         errorMessage = error.message;
+        errorType = error.type;
+      } else if (error.response) {
+        // Error HTTP del backend
+        const { status, data } = error.response;
+        
+        switch (status) {
+          case 403:
+            errorMessage = 'Solo usuarios con email @gamc.gov.bo pueden solicitar reset de contraseña';
+            errorType = PasswordResetErrorType.EMAIL_NOT_INSTITUTIONAL;
+            break;
+          case 429:
+            errorMessage = 'Demasiadas solicitudes. Espere 5 minutos antes de intentar nuevamente';
+            errorType = PasswordResetErrorType.RATE_LIMIT_EXCEEDED;
+            recordRateLimit(); // Activar rate limit local también
+            break;
+          default:
+            errorMessage = data?.message || data?.error || 'Error del servidor';
+        }
+      } else if (error.code === 'NETWORK_ERROR' || !error.response) {
+        errorMessage = 'Error de conexión. Verifique su internet e intente nuevamente';
+        errorType = PasswordResetErrorType.NETWORK_ERROR;
       }
 
-      // Mostrar mensaje específico según el tipo de error
-      switch (errorType) {
-        case PasswordResetErrorType.EMAIL_NOT_INSTITUTIONAL:
-          setMessage('🏢 ' + errorMessage);
-          break;
-        case PasswordResetErrorType.RATE_LIMIT_EXCEEDED:
-          setMessage('⏰ ' + errorMessage);
-          break;
-        case PasswordResetErrorType.NETWORK_ERROR:
-          setMessage('🔌 ' + errorMessage);
-          break;
-        case PasswordResetErrorType.SERVER_ERROR:
-          setMessage('⚠️ ' + errorMessage);
-          break;
-        default:
-          setMessage('❌ ' + errorMessage);
-      }
-
+      setMessage('❌ ' + errorMessage);
       setMessageType('error');
 
       // Callback de error
-      if (onError && error instanceof PasswordResetError) {
-        onError(error);
+      if (onError) {
+        onError(new PasswordResetError(errorType, errorMessage));
       }
+
     } finally {
       setIsLoading(false);
     }
   };
 
+  /**
+   * Formatea tiempo restante para UI
+   */
+  const formatTimeRemaining = (seconds: number): string => {
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = seconds % 60;
+    
+    if (minutes > 0) {
+      return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
+    }
+    return `${remainingSeconds}s`;
+  };
+
   // ========================================
-  // COMPONENTES AUXILIARES
+  // COMPONENTES DE UI
   // ========================================
 
-  const FieldValidationMessage = ({ validation }: { validation: FieldValidation }) => {
-    if (!validation || validation.type === '') return null;
-    
+  const RateLimitWarning = () => {
+    if (!isRateLimited || timeUntilNextRequest <= 0) return null;
+
     return (
-      <div className={getValidationMessageClasses(validation)}>
-        {validation.message}
+      <div className="mb-4 p-4 bg-amber-50 border border-amber-200 rounded-lg">
+        <div className="flex items-start">
+          <span className="text-amber-600 text-lg mr-3 mt-0.5">⏰</span>
+          <div>
+            <h4 className="text-amber-800 font-semibold text-sm mb-1">
+              Esperando tiempo de seguridad
+            </h4>
+            <p className="text-amber-700 text-sm">
+              Por seguridad, debe esperar <strong>{formatTimeRemaining(timeUntilNextRequest)}</strong> antes de solicitar otro reset.
+            </p>
+            {lastSubmissionTime && (
+              <p className="text-amber-600 text-xs mt-1">
+                Última solicitud: {new Date(lastSubmissionTime).toLocaleTimeString()}
+              </p>
+            )}
+          </div>
+        </div>
       </div>
     );
   };
 
-  const RateLimitMessage = () => {
-    if (canSubmit || timeRemaining <= 0) return null;
+  const SuccessMessage = () => {
+    if (!isSubmitted || messageType !== 'success') return null;
 
     return (
-      <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
-        <div className="flex items-center text-amber-800">
-          <span className="text-lg mr-2">⏰</span>
+      <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg">
+        <div className="flex items-start">
+          <span className="text-green-600 text-lg mr-3 mt-0.5">✅</span>
           <div>
-            <p className="text-sm font-medium">Solicitud reciente detectada</p>
-            <p className="text-xs">
-              Podrá hacer otra solicitud en {formatTimeRemaining(timeRemaining)}
+            <h4 className="text-green-800 font-semibold text-sm mb-2">
+              Solicitud enviada exitosamente
+            </h4>
+            <p className="text-green-700 text-sm mb-3">
+              Si su email existe en nuestro sistema, recibirá instrucciones para restablecer su contraseña.
             </p>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between bg-white p-3 rounded border">
+                <span className="text-sm text-gray-600">Email:</span>
+                <span className="text-sm font-medium text-gray-900">{email}</span>
+              </div>
+              <p className="text-green-600 text-xs">
+                • Revise su bandeja de entrada y carpeta de spam<br/>
+                • El enlace expira en 30 minutos<br/>
+                • Solo emails @gamc.gov.bo son válidos
+              </p>
+            </div>
           </div>
         </div>
       </div>
@@ -228,6 +319,7 @@ const ForgotPasswordForm: React.FC<ForgotPasswordFormProps> = ({
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-50 to-blue-100 flex items-center justify-center p-4">
       <div className="max-w-md w-full bg-white rounded-lg shadow-lg p-8">
+        
         {/* Header */}
         <div className="text-center mb-8">
           <div className="mx-auto h-16 w-16 bg-purple-600 rounded-full flex items-center justify-center mb-4">
@@ -235,121 +327,119 @@ const ForgotPasswordForm: React.FC<ForgotPasswordFormProps> = ({
           </div>
           <h1 className="text-2xl font-bold text-gray-900">¿Olvidaste tu contraseña?</h1>
           <p className="text-gray-600 mt-2">
-            Ingresa tu email institucional y te enviaremos un enlace para restablecer tu contraseña
+            Ingresa tu email institucional para recibir instrucciones de restablecimiento
           </p>
         </div>
 
         {/* Rate Limit Warning */}
-        <RateLimitMessage />
+        <RateLimitWarning />
 
         {/* Success Message */}
-        {isSubmitted && messageType === 'success' && (
-          <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg">
-            <div className="flex items-start">
-              <span className="text-green-600 text-xl mr-3 mt-0.5">📧</span>
-              <div>
-                <h3 className="text-green-800 font-semibold text-sm">¡Solicitud enviada!</h3>
-                <p className="text-green-700 text-xs mt-1">
-                  Si tu email existe en nuestro sistema, recibirás un enlace de reset en tu correo institucional en los próximos minutos.
-                </p>
-                <p className="text-green-600 text-xs mt-2 font-medium">
-                  ✓ Revisa tu bandeja de entrada y carpeta de spam
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
+        <SuccessMessage />
 
         {/* Formulario */}
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Correo Electrónico Institucional <span className="text-red-500">*</span>
-            </label>
-            <input
-              type="email"
-              value={email}
-              onChange={handleEmailChange}
-              className={getInputClasses(emailValidation)}
-              placeholder="usuario@gamc.gov.bo"
-              disabled={isLoading}
-              required
-            />
-            <FieldValidationMessage validation={emailValidation} />
+        {!isSubmitted && (
+          <form onSubmit={handleSubmit} className="space-y-6">
             
-            {/* Ayuda contextual */}
-            {!email && (
-              <p className="text-xs text-gray-500 mt-1">
-                Solo emails @gamc.gov.bo pueden solicitar reset de contraseña
-              </p>
-            )}
-          </div>
-
-          {/* Mensaje de estado */}
-          {message && (
-            <div className={`p-3 rounded-lg text-sm border ${
-              messageType === 'success' 
-                ? 'bg-green-50 text-green-800 border-green-200' 
-                : messageType === 'error'
-                  ? 'bg-red-50 text-red-800 border-red-200'
-                  : 'bg-blue-50 text-blue-800 border-blue-200'
-            }`}>
-              {message}
+            {/* Campo Email */}
+            <div>
+              <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
+                Email Institucional
+              </label>
+              <input
+                ref={emailInputRef}
+                type="email"
+                id="email"
+                name="email"
+                value={email}
+                onChange={handleEmailChange}
+                className={getInputClasses(emailValidation, 
+                  "w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-colors"
+                )}
+                placeholder="usuario@gamc.gov.bo"
+                disabled={isLoading || isRateLimited}
+                autoComplete="email"
+                required
+              />
+              
+              {/* Mensaje de validación */}
+              {emailValidation.message && (
+                <p className={getValidationMessageClasses(emailValidation, "text-sm mt-1")}>
+                  {emailValidation.message}
+                </p>
+              )}
             </div>
-          )}
 
-          {/* Botón de envío */}
-          <button
-            type="submit"
-            disabled={isLoading || !emailValidation.isValid || !canSubmit}
-            className={`w-full py-3 px-4 rounded-lg font-semibold transition-colors ${
-              isLoading || !emailValidation.isValid || !canSubmit
-                ? 'bg-gray-400 cursor-not-allowed text-white' 
-                : 'bg-purple-600 hover:bg-purple-700 text-white'
-            }`}
-          >
-            {isLoading ? (
-              <div className="flex items-center justify-center">
-                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-                Enviando solicitud...
+            {/* Mensaje general */}
+            {message && messageType !== 'success' && (
+              <div className={`p-3 rounded-lg text-sm ${
+                messageType === 'error' 
+                  ? 'bg-red-50 text-red-700 border border-red-200' 
+                  : 'bg-blue-50 text-blue-700 border border-blue-200'
+              }`}>
+                {message}
               </div>
-            ) : !canSubmit ? (
-              `⏰ Espere ${formatTimeRemaining(timeRemaining)}`
-            ) : (
-              '📧 Enviar enlace de reset'
             )}
-          </button>
 
-          {/* Información adicional */}
-          {!isSubmitted && (
-            <div className="text-xs text-gray-500 space-y-1">
-              <p>• El enlace de reset expira en 30 minutos</p>
-              <p>• Solo puede solicitar un reset cada 5 minutos</p>
-              <p>• Verifique su bandeja de entrada y carpeta de spam</p>
-            </div>
-          )}
-
-          {/* Botón de volver */}
-          {onBack && (
+            {/* Botón Submit */}
             <button
-              type="button"
-              onClick={onBack}
-              disabled={isLoading}
-              className="w-full py-2 px-4 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 transition-colors disabled:opacity-50"
+              type="submit"
+              disabled={isLoading || isRateLimited || !emailValidation.isValid}
+              className={`w-full py-3 px-4 rounded-lg font-medium transition-all duration-200 ${
+                isLoading || isRateLimited || !emailValidation.isValid
+                  ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                  : 'bg-purple-600 text-white hover:bg-purple-700 active:transform active:scale-95'
+              }`}
             >
-              ← Volver al login
+              {isLoading ? (
+                <div className="flex items-center justify-center">
+                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2"></div>
+                  Procesando...
+                </div>
+              ) : isRateLimited ? (
+                `Espere ${formatTimeRemaining(timeUntilNextRequest)}`
+              ) : (
+                'Enviar instrucciones'
+              )}
+            </button>
+
+          </form>
+        )}
+
+        {/* Botones de navegación */}
+        <div className="mt-8 space-y-3">
+          
+          {/* Botón volver al login */}
+          {onLoginRedirect && (
+            <button
+              onClick={onLoginRedirect}
+              className="w-full py-2 px-4 text-purple-600 bg-purple-50 rounded-lg hover:bg-purple-100 transition-colors text-sm"
+              disabled={isLoading}
+            >
+              ← Volver al inicio de sesión
             </button>
           )}
-        </form>
 
-        {/* Footer con ayuda */}
-        <div className="mt-8 pt-6 border-t border-gray-200">
-          <div className="text-center text-xs text-gray-500">
-            <p className="mb-2">¿Problemas para acceder?</p>
-            <p>Contacte al administrador del sistema:</p>
-            <p className="font-medium text-gray-700">soporte@gamc.gov.bo</p>
+          {/* Botón volver (genérico) */}
+          {onBack && !onLoginRedirect && (
+            <button
+              onClick={onBack}
+              className="w-full py-2 px-4 text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors text-sm"
+              disabled={isLoading}
+            >
+              ← Volver
+            </button>
+          )}
+
+          {/* Información adicional */}
+          <div className="text-center pt-4 border-t border-gray-200">
+            <p className="text-xs text-gray-500">
+              ¿Necesita ayuda? Contacte al administrador del sistema
+            </p>
           </div>
+
         </div>
+
       </div>
     </div>
   );
