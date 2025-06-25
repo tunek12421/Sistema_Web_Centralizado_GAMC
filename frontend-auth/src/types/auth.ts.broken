@@ -1,5 +1,6 @@
 // src/types/auth.ts
-// Versión corregida con tipos strict TypeScript
+// ARCHIVO CORREGIDO - Todas las exportaciones necesarias
+// Compatible con authService.ts y el backend GAMC
 
 export interface User {
   id: string;
@@ -29,8 +30,15 @@ export interface RegisterData {
   lastName: string;
   organizationalUnitId: number;
   role?: 'admin' | 'input' | 'output';
+  securityQuestions?: {
+    questions: Array<{
+      questionId: number;
+      answer: string;
+    }>;
+  };
 }
 
+// ✅ CRÍTICO: AuthResponse debe incluir refreshToken
 export interface AuthResponse {
   user: User;
   accessToken: string;
@@ -44,12 +52,6 @@ export interface ApiResponse<T = any> {
   data?: T;
   error?: string;
   timestamp: string;
-}
-
-export interface FieldValidation {
-  isValid: boolean;
-  message: string;
-  type: 'success' | 'error' | 'warning' | '';
 }
 
 export interface ApiError {
@@ -87,35 +89,36 @@ export interface ChangePasswordRequest {
   newPassword: string;
 }
 
+export interface FieldValidation {
+  isValid: boolean;
+  message: string;
+  type: 'success' | 'error' | 'warning' | '';
+}
+
 export interface FormValidationState<T> {
   fields: { [K in keyof T]: FieldValidation };
   isFormValid: boolean;
   hasErrors: boolean;
 }
 
-// Convertir enum a const object
-export const UserRole = {
-  ADMIN: 'admin',
-  INPUT: 'input',
-  OUTPUT: 'output'
-} as const;
+export enum UserRole {
+  ADMIN = 'admin',
+  INPUT = 'input',
+  OUTPUT = 'output'
+}
 
-export type UserRole = typeof UserRole[keyof typeof UserRole];
-
-export const AuthErrorType = {
-  INVALID_CREDENTIALS: 'invalid_credentials',
-  USER_NOT_FOUND: 'user_not_found',
-  USER_INACTIVE: 'user_inactive',
-  EMAIL_ALREADY_EXISTS: 'email_already_exists',
-  WEAK_PASSWORD: 'weak_password',
-  TOKEN_EXPIRED: 'token_expired',
-  TOKEN_INVALID: 'token_invalid',
-  RATE_LIMIT_EXCEEDED: 'rate_limit_exceeded',
-  NETWORK_ERROR: 'network_error',
-  SERVER_ERROR: 'server_error'
-} as const;
-
-export type AuthErrorType = typeof AuthErrorType[keyof typeof AuthErrorType];
+export enum AuthErrorType {
+  INVALID_CREDENTIALS = 'invalid_credentials',
+  USER_NOT_FOUND = 'user_not_found',
+  USER_INACTIVE = 'user_inactive',
+  EMAIL_ALREADY_EXISTS = 'email_already_exists',
+  WEAK_PASSWORD = 'weak_password',
+  TOKEN_EXPIRED = 'token_expired',
+  TOKEN_INVALID = 'token_invalid',
+  RATE_LIMIT_EXCEEDED = 'rate_limit_exceeded',
+  NETWORK_ERROR = 'network_error',
+  SERVER_ERROR = 'server_error'
+}
 
 export const AUTH_CONFIG = {
   LOGIN_TIMEOUT: 10000,
@@ -130,24 +133,24 @@ export const AUTH_CONFIG = {
 } as const;
 
 export const isUser = (obj: any): obj is User => {
-  return obj &&
-    typeof obj.id === 'string' &&
-    typeof obj.email === 'string' &&
-    typeof obj.firstName === 'string' &&
-    typeof obj.lastName === 'string' &&
-    ['admin', 'input', 'output'].includes(obj.role);
+  return obj && 
+         typeof obj.id === 'string' &&
+         typeof obj.email === 'string' &&
+         typeof obj.firstName === 'string' &&
+         typeof obj.lastName === 'string' &&
+         ['admin', 'input', 'output'].includes(obj.role);
 };
 
 export const isAuthResponse = (obj: any): obj is AuthResponse => {
   return obj &&
-    typeof obj.accessToken === 'string' &&
-    typeof obj.refreshToken === 'string' &&
-    isUser(obj.user);
+         typeof obj.accessToken === 'string' &&
+         typeof obj.refreshToken === 'string' &&
+         isUser(obj.user);
 };
 
 export const isApiResponse = <T>(obj: any): obj is ApiResponse<T> => {
   return obj &&
-    typeof obj.success === 'boolean' &&
-    typeof obj.message === 'string' &&
-    typeof obj.timestamp === 'string';
+         typeof obj.success === 'boolean' &&
+         typeof obj.message === 'string' &&
+         typeof obj.timestamp === 'string';
 };

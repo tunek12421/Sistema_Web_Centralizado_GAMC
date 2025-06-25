@@ -5,7 +5,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { passwordResetService, PasswordResetError } from '../../services/passwordResetService';
 import { validateEmail, getInputClasses, getValidationMessageClasses } from '../../utils/passwordValidation';
-import { FieldValidation, PasswordResetErrorType, PASSWORD_RESET_CONFIG } from '../../types/passwordReset';
+import type { FieldValidation, PasswordResetErrorType } from '../../types/passwordReset';
+import { PASSWORD_RESET_CONFIG } from '../../types/passwordReset';
 
 interface ForgotPasswordFormProps {
   onSuccess?: (email: string, requiresSecurityQuestion: boolean, securityQuestion?: any) => void;
@@ -199,7 +200,7 @@ const ForgotPasswordForm: React.FC<ForgotPasswordFormProps> = ({
       console.error('Error en solicitud de reset:', error);
       
       let errorMessage = 'Error al procesar solicitud';
-      let errorType: PasswordResetErrorType = PasswordResetErrorType.SERVER_ERROR;
+      let errorType: PasswordResetErrorType = 'server_error';
 
       if (error instanceof PasswordResetError) {
         errorMessage = error.message;
@@ -211,11 +212,11 @@ const ForgotPasswordForm: React.FC<ForgotPasswordFormProps> = ({
         switch (status) {
           case 403:
             errorMessage = 'Solo usuarios con email @gamc.gov.bo pueden solicitar reset de contraseña';
-            errorType = PasswordResetErrorType.EMAIL_NOT_INSTITUTIONAL;
+            errorType = 'email_not_institutional';
             break;
           case 429:
             errorMessage = 'Demasiadas solicitudes. Espere 5 minutos antes de intentar nuevamente';
-            errorType = PasswordResetErrorType.RATE_LIMIT_EXCEEDED;
+            errorType = 'rate_limit_exceeded';
             recordRateLimit(); // Activar rate limit local también
             break;
           default:
@@ -223,7 +224,7 @@ const ForgotPasswordForm: React.FC<ForgotPasswordFormProps> = ({
         }
       } else if (error.code === 'NETWORK_ERROR' || !error.response) {
         errorMessage = 'Error de conexión. Verifique su internet e intente nuevamente';
-        errorType = PasswordResetErrorType.NETWORK_ERROR;
+        errorType = 'network_error';
       }
 
       setMessage('❌ ' + errorMessage);
@@ -364,7 +365,7 @@ const ForgotPasswordForm: React.FC<ForgotPasswordFormProps> = ({
               
               {/* Mensaje de validación */}
               {emailValidation.message && (
-                <p className={getValidationMessageClasses(emailValidation, "text-sm mt-1")}>
+                <p className={getValidationMessageClasses(emailValidation)}>
                   {emailValidation.message}
                 </p>
               )}

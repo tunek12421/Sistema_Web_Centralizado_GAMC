@@ -2,49 +2,67 @@
 // Interfaces TypeScript para el módulo de reset de contraseña
 // Compatible con el backend GAMC y reutiliza tipos existentes
 
-import { ApiResponse, FieldValidation } from './auth';
+// ========================================
+// INTERFACES BÁSICAS
+// ========================================
+
+export interface FieldValidation {
+  isValid: boolean;
+  message: string;
+  type: 'success' | 'error' | 'warning' | '';
+}
+
+export interface ApiResponse<T = any> {
+  success: boolean;
+  message: string;
+  data?: T;
+  error?: string;
+  timestamp: string;
+}
+
+// ========================================
+// TIPOS SIMPLES
+// ========================================
+
+export type PasswordResetTokenStatus = 'active' | 'expired' | 'used' | 'invalid';
+
+export type PasswordResetErrorType = 
+  | 'email_not_institutional'
+  | 'rate_limit_exceeded'
+  | 'email_not_found'
+  | 'token_invalid'
+  | 'token_expired'
+  | 'token_used'
+  | 'password_weak'
+  | 'network_error'
+  | 'server_error'
+  | 'validation_error';
 
 // ========================================
 // INTERFACES PRINCIPALES DE RESET
 // ========================================
 
-/**
- * Solicitud de reset de contraseña
- * Usada en: ForgotPasswordForm, passwordResetService.requestPasswordReset()
- */
 export interface PasswordResetRequest {
-  email: string; // Debe ser email institucional @gamc.gov.bo
+  email: string;
 }
 
-/**
- * Confirmación de reset de contraseña
- * Usada en: ResetPasswordForm, passwordResetService.confirmPasswordReset()
- */
 export interface PasswordResetConfirm {
-  token: string;       // Token de 64 caracteres hex
-  newPassword: string; // Nueva contraseña que cumple políticas
+  token: string;
+  newPassword: string;
 }
 
-/**
- * Token de reset de contraseña (modelo completo del backend)
- * Usada en: Estado de admin, consultas de tokens
- */
 export interface PasswordResetToken {
   id: number;
   userId: string;
-  expiresAt: string;    // ISO string datetime
-  createdAt: string;    // ISO string datetime
-  usedAt?: string;      // ISO string datetime (opcional)
+  expiresAt: string;
+  createdAt: string;
+  usedAt?: string;
   requestIp: string;
   userAgent?: string;
   isActive: boolean;
-  
-  // Metadatos de auditoría
-  emailSentAt?: string;    // ISO string datetime (opcional)
-  emailOpenedAt?: string;  // ISO string datetime (opcional) 
+  emailSentAt?: string;
+  emailOpenedAt?: string;
   attemptsCount: number;
-  
-  // Relación con usuario (opcional, solo para admin)
   user?: {
     id: string;
     email: string;
@@ -54,33 +72,23 @@ export interface PasswordResetToken {
 }
 
 // ========================================
-// RESPUESTAS ESPECÍFICAS DE LA API
+// RESPUESTAS DE LA API
 // ========================================
 
-/**
- * Respuesta de solicitud de reset exitosa
- * Siempre devuelve el mismo mensaje por seguridad
- */
 export interface PasswordResetRequestResponse extends ApiResponse {
   data: {
-    message: string; // "Si el email existe y es válido, recibirás un enlace..."
-    note: string;    // "Solo emails @gamc.gov.bo pueden solicitar reset..."
+    message: string;
+    note: string;
   };
 }
 
-/**
- * Respuesta de confirmación de reset exitosa
- */
 export interface PasswordResetConfirmResponse extends ApiResponse {
   data: {
-    message: string; // "Su contraseña ha sido cambiada exitosamente..."
-    note: string;    // "Inicie sesión con su nueva contraseña"
+    message: string;
+    note: string;
   };
 }
 
-/**
- * Respuesta de estado de tokens de reset (para usuarios autenticados)
- */
 export interface PasswordResetStatusResponse extends ApiResponse {
   data: {
     tokens: PasswordResetToken[];
@@ -88,71 +96,25 @@ export interface PasswordResetStatusResponse extends ApiResponse {
   };
 }
 
-/**
- * Respuesta de limpieza de tokens (solo admins)
- */
 export interface PasswordResetCleanupResponse extends ApiResponse {
   data: {
     cleanedTokens: number;
-    timestamp: string; // ISO string datetime
+    timestamp: string;
   };
-}
-
-// ========================================
-// ENUMS Y CONSTANTES
-// ========================================
-
-/**
- * Estados posibles de un token de reset
- */
-export enum PasswordResetTokenStatus {
-  ACTIVE = 'active',      // Token válido y activo
-  EXPIRED = 'expired',    // Token expirado (>30 min)
-  USED = 'used',         // Token ya utilizado
-  INVALID = 'invalid'     // Token inválido o no encontrado
-}
-
-/**
- * Tipos de errores específicos del reset de contraseña
- */
-export enum PasswordResetErrorType {
-  // Errores de solicitud
-  EMAIL_NOT_INSTITUTIONAL = 'email_not_institutional',
-  RATE_LIMIT_EXCEEDED = 'rate_limit_exceeded',
-  EMAIL_NOT_FOUND = 'email_not_found',
-  
-  // Errores de confirmación
-  TOKEN_INVALID = 'token_invalid',
-  TOKEN_EXPIRED = 'token_expired',
-  TOKEN_USED = 'token_used',
-  PASSWORD_WEAK = 'password_weak',
-  
-  // Errores generales
-  NETWORK_ERROR = 'network_error',
-  SERVER_ERROR = 'server_error',
-  VALIDATION_ERROR = 'validation_error'
 }
 
 // ========================================
 // INTERFACES PARA COMPONENTES UI
 // ========================================
 
-/**
- * Estado del formulario de solicitud de reset
- * Usada en: ForgotPasswordForm, usePasswordReset hook
- */
 export interface ForgotPasswordFormState {
   email: string;
   isLoading: boolean;
   isSubmitted: boolean;
   validation: FieldValidation;
-  lastSubmissionTime?: number; // timestamp para rate limiting UI
+  lastSubmissionTime?: number;
 }
 
-/**
- * Estado del formulario de confirmación de reset
- * Usada en: ResetPasswordForm, usePasswordReset hook
- */
 export interface ResetPasswordFormState {
   token: string;
   newPassword: string;
@@ -166,10 +128,6 @@ export interface ResetPasswordFormState {
   };
 }
 
-/**
- * Estado general del proceso de reset
- * Usada en: usePasswordReset hook, páginas completas
- */
 export interface PasswordResetState {
   step: 'request' | 'email_sent' | 'confirm' | 'success' | 'error';
   email?: string;
@@ -177,54 +135,41 @@ export interface PasswordResetState {
   error?: PasswordResetErrorType;
   errorMessage?: string;
   successMessage?: string;
-  requestedAt?: number; // timestamp
-  expiresAt?: number;   // timestamp
+  requestedAt?: number;
+  expiresAt?: number;
 }
 
 // ========================================
 // INTERFACES PARA HOOKS Y SERVICIOS
 // ========================================
 
-/**
- * Opciones para el hook usePasswordReset
- */
 export interface UsePasswordResetOptions {
-  autoRedirect?: boolean;           // Redirect automático después del éxito
-  redirectDelay?: number;          // Delay en ms para redirect (default: 3000)
-  enableRateLimitUI?: boolean;     // Mostrar cooldown en UI
+  autoRedirect?: boolean;
+  redirectDelay?: number;
+  enableRateLimitUI?: boolean;
   onSuccess?: (step: 'request' | 'confirm') => void;
   onError?: (error: PasswordResetErrorType, message: string) => void;
 }
 
-/**
- * Resultado del hook usePasswordReset
- */
 export interface UsePasswordResetResult {
-  // Estado
   state: PasswordResetState;
   formStates: {
     forgot: ForgotPasswordFormState;
     reset: ResetPasswordFormState;
   };
-  
-  // Acciones
   requestReset: (email: string) => Promise<void>;
   confirmReset: (token: string, newPassword: string) => Promise<void>;
   validateToken: (token: string) => FieldValidation;
   validatePassword: (password: string) => FieldValidation;
-  
-  // Utilidades
   canSubmitRequest: boolean;
   canSubmitConfirm: boolean;
-  timeUntilNextRequest: number; // segundos restantes para rate limit
-  
-  // Admin (solo para role admin)
+  timeUntilNextRequest: number;
   getResetStatus?: () => Promise<PasswordResetToken[]>;
   cleanupExpiredTokens?: () => Promise<number>;
 }
 
 // ========================================
-// CLASES DE ERROR PERSONALIZADAS
+// CLASES DE ERROR
 // ========================================
 
 export class PasswordResetError extends Error {
@@ -242,66 +187,66 @@ export class PasswordResetError extends Error {
 // CONFIGURACIÓN Y CONSTANTES
 // ========================================
 
-/**
- * Configuración del módulo de reset de contraseña
- */
 export const PASSWORD_RESET_CONFIG = {
-  // Validaciones
   TOKEN_LENGTH: 64,
   MIN_PASSWORD_LENGTH: 8,
   ALLOWED_SPECIAL_CHARS: '@$!%*?&',
-  
-  // Timeouts (en milisegundos)
-  REQUEST_TIMEOUT: 10000,        // 10 segundos
-  TOKEN_EXPIRY: 30 * 60 * 1000, // 30 minutos
-  RATE_LIMIT_WINDOW: 5 * 60 * 1000, // 5 minutos
-  
-  // UI
-  AUTO_REDIRECT_DELAY: 3000,     // 3 segundos
-  SUCCESS_MESSAGE_DURATION: 5000, // 5 segundos
-  
-  // Regex patterns
+  REQUEST_TIMEOUT: 10000,
+  TOKEN_EXPIRY: 30 * 60 * 1000,
+  RATE_LIMIT_WINDOW: 5 * 60 * 1000,
+  AUTO_REDIRECT_DELAY: 3000,
+  SUCCESS_MESSAGE_DURATION: 5000,
   EMAIL_PATTERN: /^[^\s@]+@gamc\.gov\.bo$/,
   TOKEN_PATTERN: /^[a-f0-9]{64}$/i,
-  PASSWORD_PATTERN: /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/,
-  
-  // Mensajes de error
-  ERROR_MESSAGES: {
-    [PasswordResetErrorType.EMAIL_NOT_INSTITUTIONAL]: 'Solo emails @gamc.gov.bo pueden solicitar reset',
-    [PasswordResetErrorType.RATE_LIMIT_EXCEEDED]: 'Debe esperar 5 minutos entre solicitudes',
-    [PasswordResetErrorType.TOKEN_INVALID]: 'Token de reset inválido',
-    [PasswordResetErrorType.TOKEN_EXPIRED]: 'Token de reset expirado',
-    [PasswordResetErrorType.TOKEN_USED]: 'Token ya utilizado',
-    [PasswordResetErrorType.PASSWORD_WEAK]: 'Contraseña no cumple requisitos',
-    [PasswordResetErrorType.NETWORK_ERROR]: 'Error de conexión',
-    [PasswordResetErrorType.SERVER_ERROR]: 'Error del servidor',
-    [PasswordResetErrorType.VALIDATION_ERROR]: 'Error de validación'
-  }
-} as const;
+  PASSWORD_PATTERN: /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/
+};
+
+export const PASSWORD_RESET_MESSAGES = {
+  email_not_institutional: 'Solo emails @gamc.gov.bo pueden solicitar reset',
+  rate_limit_exceeded: 'Debe esperar 5 minutos entre solicitudes',
+  token_invalid: 'Token de reset inválido',
+  token_expired: 'Token de reset expirado',
+  token_used: 'Token ya utilizado',
+  password_weak: 'Contraseña no cumple requisitos',
+  network_error: 'Error de conexión',
+  server_error: 'Error del servidor',
+  validation_error: 'Error de validación',
+  email_not_found: 'Email no encontrado',
+  EMAIL_REQUIRED: 'Email es requerido',
+  EMAIL_INVALID_FORMAT: 'Formato de email inválido',
+  PASSWORD_REQUIRED: 'Contraseña es requerida',
+  PASSWORD_TOO_SHORT: 'Contraseña debe tener al menos 8 caracteres',
+  PASSWORD_CONFIRM_MISMATCH: 'Las contraseñas no coinciden',
+  TOKEN_REQUIRED: 'Token es requerido',
+  TOKEN_INVALID_FORMAT: 'Formato de token inválido'
+};
 
 // ========================================
 // UTILIDADES Y HELPERS
 // ========================================
 
-/**
- * Verifica si un string es un token válido
- */
 export const isValidResetToken = (token: string): boolean => {
   return typeof token === 'string' && 
          token.length === PASSWORD_RESET_CONFIG.TOKEN_LENGTH &&
          PASSWORD_RESET_CONFIG.TOKEN_PATTERN.test(token);
 };
 
-/**
- * Obtiene el mensaje de error apropiado para un tipo de error
- */
 export const getPasswordResetErrorMessage = (type: PasswordResetErrorType): string => {
-  return PASSWORD_RESET_CONFIG.ERROR_MESSAGES[type] || 'Error desconocido';
+  const messages = {
+    email_not_institutional: 'Solo emails @gamc.gov.bo pueden solicitar reset',
+    rate_limit_exceeded: 'Debe esperar 5 minutos entre solicitudes',
+    token_invalid: 'Token de reset inválido',
+    token_expired: 'Token de reset expirado',
+    token_used: 'Token ya utilizado',
+    password_weak: 'Contraseña no cumple requisitos',
+    network_error: 'Error de conexión',
+    server_error: 'Error del servidor',
+    validation_error: 'Error de validación',
+    email_not_found: 'Email no encontrado'
+  };
+  return messages[type] || 'Error desconocido';
 };
 
-/**
- * Valida un email para reset de contraseña
- */
 export const validateResetEmail = (email: string): FieldValidation => {
   if (!email || !email.trim()) {
     return {
@@ -326,9 +271,6 @@ export const validateResetEmail = (email: string): FieldValidation => {
   };
 };
 
-/**
- * Calcula tiempo restante para rate limiting
- */
 export const getRateLimitTimeRemaining = (): number => {
   try {
     const lastRequest = localStorage.getItem('gamc_last_reset_request');

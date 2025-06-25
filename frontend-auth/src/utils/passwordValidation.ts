@@ -2,8 +2,8 @@
 // Utilidades de validación de contraseñas para el módulo de reset
 // Compatible 100% con las validaciones del backend GAMC
 
+import type { FieldValidation } from '../types/passwordReset';
 import { 
-  FieldValidation, 
   PASSWORD_RESET_CONFIG, 
   PASSWORD_RESET_MESSAGES 
 } from '../types/passwordReset';
@@ -48,7 +48,7 @@ export const validateEmail = (email: string): FieldValidation => {
   // Email válido pero no institucional
   return { 
     isValid: false, 
-    message: PASSWORD_RESET_MESSAGES.EMAIL_NOT_INSTITUTIONAL, 
+    message: PASSWORD_RESET_MESSAGES.email_not_institutional, 
     type: 'error' 
   };
 };
@@ -313,10 +313,12 @@ export const getValidationMessageClasses = (validation: FieldValidation): string
   const colors = {
     success: 'text-green-600 bg-green-50 border-green-200',
     error: 'text-red-600 bg-red-50 border-red-200',
-    warning: 'text-amber-600 bg-amber-50 border-amber-200'
+    warning: 'text-amber-600 bg-amber-50 border-amber-200',
+    '': 'text-gray-600 bg-gray-50 border-gray-200'
   };
 
-  return `text-xs mt-1 p-2 rounded border ${colors[validation.type] || 'text-gray-600 bg-gray-50 border-gray-200'}`;
+  const validationType = validation.type || '';
+  return `text-xs mt-1 p-2 rounded border ${colors[validationType]}`;
 };
 
 /**

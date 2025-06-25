@@ -3,9 +3,10 @@
 // Incluye manejo de intentos, validaciones y UI de progreso
 
 import React, { useState, useEffect, useRef } from 'react';
-import { securityQuestionsService, SecurityQuestionError, VerifySecurityQuestionRequest } from '../../services/securityQuestionsService';
+import { securityQuestionsService, SecurityQuestionError } from '../../services/securityQuestionsService';
+import type { VerifySecurityQuestionRequest } from '../../services/securityQuestionsService';
 import { getInputClasses, getValidationMessageClasses } from '../../utils/passwordValidation';
-import { FieldValidation } from '../../types/passwordReset';
+import type { FieldValidation } from '../../types/passwordReset';
 
 interface SecurityQuestionData {
   questionId: number;
@@ -405,7 +406,7 @@ const SecurityQuestionForm: React.FC<SecurityQuestionFormProps> = ({
               
               {/* Mensaje de validación */}
               {answerValidation.message && (
-                <p className={getValidationMessageClasses(answerValidation, "text-sm mt-1")}>
+                <p className={getValidationMessageClasses(answerValidation)}>
                   {answerValidation.message}
                 </p>
               )}

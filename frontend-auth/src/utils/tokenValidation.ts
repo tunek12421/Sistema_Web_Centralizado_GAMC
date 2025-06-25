@@ -2,7 +2,8 @@
 // Utilidades para validación y manejo de tokens de reset de contraseña
 // Incluye extracción de URL, validaciones, timers y persistencia
 
-import { FieldValidation, PASSWORD_RESET_CONFIG, PasswordResetTokenStatus } from '../types/passwordReset';
+import type { FieldValidation, PasswordResetTokenStatus } from '../types/passwordReset';
+import { PASSWORD_RESET_CONFIG } from '../types/passwordReset';
 
 // ========================================
 // EXTRACCIÓN Y LIMPIEZA DE TOKENS DESDE URL
@@ -137,7 +138,7 @@ export const validateTokenState = async (token: string): Promise<FieldValidation
     if (!formatValidation.isValid) {
       return {
         ...formatValidation,
-        status: PasswordResetTokenStatus.INVALID
+        status: 'invalid'
       };
     }
     
@@ -154,7 +155,7 @@ export const validateTokenState = async (token: string): Promise<FieldValidation
         isValid: false,
         message: 'Token ha expirado. Solicite un nuevo reset de contraseña',
         type: 'error',
-        status: PasswordResetTokenStatus.EXPIRED
+        status: 'expired'
       };
     }
     
@@ -162,7 +163,7 @@ export const validateTokenState = async (token: string): Promise<FieldValidation
       isValid: true,
       message: '✓ Token válido y activo',
       type: 'success',
-      status: PasswordResetTokenStatus.ACTIVE
+      status: 'active'
     };
     
   } catch (error) {
@@ -171,7 +172,7 @@ export const validateTokenState = async (token: string): Promise<FieldValidation
       isValid: false,
       message: 'Error al verificar token. Intente nuevamente',
       type: 'error',
-      status: PasswordResetTokenStatus.INVALID
+      status: 'invalid'
     };
   }
 };

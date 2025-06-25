@@ -20,11 +20,11 @@ import {
   formatTokenTimeRemaining,
   isTokenNearExpiration
 } from '../../utils/tokenValidation';
-import { 
+import type { 
   FieldValidation, 
-  PasswordResetErrorType,
-  PASSWORD_RESET_MESSAGES 
+  PasswordResetErrorType
 } from '../../types/passwordReset';
+import { PASSWORD_RESET_MESSAGES } from '../../types/passwordReset';
 
 interface ResetPasswordFormProps {
   token: string;
@@ -200,23 +200,6 @@ const ResetPasswordForm: React.FC<ResetPasswordFormProps> = ({
     setMessageType('');
 
     try {
-      // Validaciones adicionales del servicio
-      const tokenValidationService = passwordResetService.validateTokenForReset(token);
-      if (!tokenValidationService.isValid) {
-        throw new PasswordResetError(
-          PasswordResetErrorType.TOKEN_INVALID,
-          tokenValidationService.error || 'Token inválido'
-        );
-      }
-
-      const passwordValidationService = passwordResetService.validatePasswordForReset(newPassword);
-      if (!passwordValidationService.isValid) {
-        throw new PasswordResetError(
-          PasswordResetErrorType.PASSWORD_WEAK,
-          passwordValidationService.error || 'Contraseña inválida'
-        );
-      }
-
       // Enviar confirmación de reset
       const response = await passwordResetService.confirmPasswordReset({
         token: token.trim(),
@@ -242,10 +225,10 @@ const ResetPasswordForm: React.FC<ResetPasswordFormProps> = ({
       console.error('Error en confirmación de reset:', error);
       
       let errorMessage = 'Error inesperado';
-      let errorType = PasswordResetErrorType.UNKNOWN_ERROR;
+      let errorType: PasswordResetErrorType = 'server_error';
 
       if (error instanceof PasswordResetError) {
-        errorMessage = error.getUserMessage();
+        errorMessage = error.message;
         errorType = error.type;
       } else if (error instanceof Error) {
         errorMessage = error.message;
@@ -253,23 +236,23 @@ const ResetPasswordForm: React.FC<ResetPasswordFormProps> = ({
 
       // Mostrar mensaje específico según el tipo de error
       switch (errorType) {
-        case PasswordResetErrorType.TOKEN_EXPIRED:
+        case 'token_expired':
           setMessage('⏰ ' + errorMessage);
           if (onTokenExpired) setTimeout(onTokenExpired, 1000);
           break;
-        case PasswordResetErrorType.TOKEN_USED:
+        case 'token_used':
           setMessage('🔄 ' + errorMessage);
           break;
-        case PasswordResetErrorType.TOKEN_INVALID:
+        case 'token_invalid':
           setMessage('🔗 ' + errorMessage);
           break;
-        case PasswordResetErrorType.PASSWORD_WEAK:
+        case 'password_weak':
           setMessage('🔒 ' + errorMessage);
           break;
-        case PasswordResetErrorType.NETWORK_ERROR:
+        case 'network_error':
           setMessage('🔌 ' + errorMessage);
           break;
-        case PasswordResetErrorType.SERVER_ERROR:
+        case 'server_error':
           setMessage('⚠️ ' + errorMessage);
           break;
         default:

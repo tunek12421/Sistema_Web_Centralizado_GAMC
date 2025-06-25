@@ -2,9 +2,10 @@
 // GAMC Frontend Auth - Redux Auth Slice
 // ========================================
 
-import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
+import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
+import type { PayloadAction } from '@reduxjs/toolkit';
 import { authService } from '../services/authService';
-import { User, LoginCredentials, RegisterData } from '../types/auth';
+import type { User, LoginCredentials, RegisterData } from '../types/index';
 
 interface AuthState {
   user: User | null;
@@ -179,7 +180,7 @@ const authSlice = createSlice({
 
     // Refresh Token
     builder
-      .addCase(refreshToken.pending, (state) => {
+      .addCase(refreshToken.pending, () => {
         // No mostrar loading para refresh
       })
       .addCase(refreshToken.fulfilled, (state, action) => {

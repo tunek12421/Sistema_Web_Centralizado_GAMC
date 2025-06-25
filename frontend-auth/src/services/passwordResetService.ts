@@ -3,16 +3,16 @@
 // Integrado con preguntas de seguridad y arquitectura existente
 
 import { apiClient } from './api';
-import { ApiResponse } from '../types/auth';
-import { 
+import type { ApiResponse } from '../types/index';
+import type { 
   PasswordResetRequest,
   PasswordResetConfirm,
-  PasswordResetRequestResponse,
   PasswordResetConfirmResponse,
-  PasswordResetStatusResponse,
   PasswordResetCleanupResponse,
   PasswordResetToken,
-  PasswordResetErrorType,
+  PasswordResetErrorType
+} from '../types/passwordReset';
+import { 
   PasswordResetError,
   PASSWORD_RESET_CONFIG 
 } from '../types/passwordReset';
@@ -68,7 +68,8 @@ export interface PasswordResetStatusByEmailResponse {
 }
 
 // Exportar la clase de error para uso externo
-export { PasswordResetError, PasswordResetErrorType };
+export { PasswordResetError };
+export type { PasswordResetErrorType };
 
 // ========================================
 // SERVICIO PRINCIPAL
@@ -98,7 +99,7 @@ class PasswordResetService {
 
       return response.data!.questions;
     } catch (error: any) {
-      throw this.handlePasswordResetError(error, 'questions');
+      throw this.handlePasswordResetError(error);
     }
   }
 
@@ -125,7 +126,7 @@ class PasswordResetService {
 
       return response.data!;
     } catch (error: any) {
-      throw this.handlePasswordResetError(error, 'request');
+      throw this.handlePasswordResetError(error);
     }
   }
 
@@ -148,7 +149,7 @@ class PasswordResetService {
 
       return response.data!;
     } catch (error: any) {
-      throw this.handlePasswordResetError(error, 'verify');
+      throw this.handlePasswordResetError(error);
     }
   }
 
@@ -167,7 +168,7 @@ class PasswordResetService {
 
       return response.data!;
     } catch (error: any) {
-      throw this.handlePasswordResetError(error, 'status');
+      throw this.handlePasswordResetError(error);
     }
   }
 
@@ -193,7 +194,7 @@ class PasswordResetService {
 
       return response;
     } catch (error: any) {
-      throw this.handlePasswordResetError(error, 'confirm');
+      throw this.handlePasswordResetError(error);
     }
   }
 
@@ -217,7 +218,7 @@ class PasswordResetService {
 
       return response.data!.tokens;
     } catch (error: any) {
-      throw this.handlePasswordResetError(error, 'history');
+      throw this.handlePasswordResetError(error);
     }
   }
 
@@ -241,7 +242,7 @@ class PasswordResetService {
 
       return response;
     } catch (error: any) {
-      throw this.handlePasswordResetError(error, 'cleanup');
+      throw this.handlePasswordResetError(error);
     }
   }
 
@@ -340,7 +341,7 @@ class PasswordResetService {
     const emailValidation = this.validateEmailForReset(email);
     if (!emailValidation.isValid) {
       throw new PasswordResetError(
-        PasswordResetErrorType.VALIDATION_ERROR,
+        'validation_error',
         emailValidation.error!
       );
     }
@@ -348,7 +349,7 @@ class PasswordResetService {
     const passwordValidation = this.validatePasswordForReset(newPassword);
     if (!passwordValidation.isValid) {
       throw new PasswordResetError(
-        PasswordResetErrorType.PASSWORD_WEAK,
+        'password_weak',
         passwordValidation.error!
       );
     }
@@ -362,7 +363,7 @@ class PasswordResetService {
     if (resetRequest.requiresSecurityQuestion && resetRequest.securityQuestion) {
       if (!onSecurityQuestionRequired) {
         throw new PasswordResetError(
-          PasswordResetErrorType.VALIDATION_ERROR,
+          'validation_error',
           'Se requiere verificación de pregunta de seguridad pero no se proporcionó manejador'
         );
       }
@@ -374,7 +375,7 @@ class PasswordResetService {
       const answerValidation = this.validateSecurityAnswer(userAnswer);
       if (!answerValidation.isValid) {
         throw new PasswordResetError(
-          PasswordResetErrorType.VALIDATION_ERROR,
+          'validation_error',
           answerValidation.error!
         );
       }
@@ -388,7 +389,7 @@ class PasswordResetService {
 
       if (!verifyResponse.verified || !verifyResponse.resetToken) {
         throw new PasswordResetError(
-          PasswordResetErrorType.VALIDATION_ERROR,
+          'validation_error',
           verifyResponse.message
         );
       }
@@ -398,7 +399,7 @@ class PasswordResetService {
       // Para usuarios sin preguntas de seguridad, el token debería venir por email
       // En este caso, necesitamos que el usuario proporcione el token manualmente
       throw new PasswordResetError(
-        PasswordResetErrorType.VALIDATION_ERROR,
+        'validation_error',
         'Token de reset enviado por email. Revise su correo institucional'
       );
     }
@@ -417,11 +418,11 @@ class PasswordResetService {
   /**
    * Maneja errores específicos de reset de contraseña
    */
-  private handlePasswordResetError(error: any, operation: string): Error {
+  private handlePasswordResetError(error: any): Error {
     // Error de red/timeout
     if (!error.response) {
       return new PasswordResetError(
-        PasswordResetErrorType.NETWORK_ERROR,
+        'network_error',
         'Error de conexión. Verifique su internet e intente nuevamente.'
       );
     }
@@ -433,19 +434,19 @@ class PasswordResetService {
       case 400:
         if (data?.error?.includes('email no institucional') || data?.error?.includes('gamc.gov.bo')) {
           return new PasswordResetError(
-            PasswordResetErrorType.EMAIL_NOT_INSTITUTIONAL,
+            'email_not_institutional',
             'Solo emails @gamc.gov.bo pueden solicitar reset de contraseña'
           );
         }
         if (data?.error?.includes('token inválido') || data?.error?.includes('token expirado')) {
           return new PasswordResetError(
-            PasswordResetErrorType.TOKEN_INVALID,
+            'token_invalid',
             'Token de reset inválido o expirado'
           );
         }
         if (data?.error?.includes('contraseña débil') || data?.error?.includes('requisitos')) {
           return new PasswordResetError(
-            PasswordResetErrorType.PASSWORD_WEAK,
+            'password_weak',
             'La contraseña no cumple con los requisitos de seguridad'
           );
         }
@@ -453,26 +454,26 @@ class PasswordResetService {
 
       case 429:
         return new PasswordResetError(
-          PasswordResetErrorType.RATE_LIMIT_EXCEEDED,
+          'rate_limit_exceeded',
           'Demasiadas solicitudes. Espere 5 minutos antes de intentar nuevamente.'
         );
 
       case 404:
         return new PasswordResetError(
-          PasswordResetErrorType.EMAIL_NOT_FOUND,
+          'email_not_found',
           'Si el email existe, recibirá instrucciones para restablecer su contraseña'
         );
 
       case 500:
       default:
         return new PasswordResetError(
-          PasswordResetErrorType.SERVER_ERROR,
+          'server_error',
           'Error interno del servidor. Intente nuevamente más tarde.'
         );
     }
 
     return new PasswordResetError(
-      PasswordResetErrorType.VALIDATION_ERROR,
+      'validation_error',
       data?.message || data?.error || 'Error desconocido'
     );
   }

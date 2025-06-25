@@ -1,93 +1,56 @@
-// src/types/index.ts
-// Archivo central de exportación de tipos
-// Facilita las importaciones y evita conflictos
+// index.ts independiente - sin importaciones problemáticas
 
-// ========================================
-// TIPOS DE AUTENTICACIÓN
-// ========================================
-export {
-  // Interfaces principales
-  User,
-  LoginCredentials,
-  RegisterData,
-  AuthResponse,
-  ApiResponse,
-  ApiError,
-  
-  // Interfaces de perfil
-  UserProfile,
-  ChangePasswordRequest,
-  RefreshTokenResponse,
-  TokenVerificationResponse,
-  
-  // Interfaces de validación
-  FieldValidation,
-  FormValidationState,
-  
-  // Enums y constantes
-  UserRole,
-  AuthErrorType,
-  AUTH_CONFIG,
-  
-  // Guards de tipos
-  isUser,
-  isAuthResponse,
-  isApiResponse
-} from './auth';
+// Definiciones locales de tipos principales
+export interface User {
+  id: string;
+  email: string;
+  firstName: string;
+  lastName: string;
+  role: 'admin' | 'input' | 'output';
+  organizationalUnit: {
+    id: number;
+    name: string;
+    code: string;
+  };
+  isActive: boolean;
+  lastLogin?: string;
+  createdAt: string;
+}
 
-// ========================================
-// TIPOS DE PASSWORD RESET
-// ========================================
-export {
-  // Interfaces principales
-  PasswordResetRequest,
-  PasswordResetConfirm,
-  PasswordResetToken,
-  
-  // Respuestas de API
-  PasswordResetRequestResponse,
-  PasswordResetConfirmResponse,
-  PasswordResetStatusResponse,
-  PasswordResetCleanupResponse,
-  
-  // Estados de formularios
-  ForgotPasswordFormState,
-  ResetPasswordFormState,
-  PasswordResetState,
-  
-  // Hooks y servicios
-  UsePasswordResetOptions,
-  UsePasswordResetResult,
-  
-  // Enums y constantes
-  PasswordResetTokenStatus,
-  PasswordResetErrorType,
-  PASSWORD_RESET_CONFIG,
-  
-  // Clases de error
-  PasswordResetError,
-  
-  // Utilidades
-  isValidResetToken,
-  getPasswordResetErrorMessage,
-  validateResetEmail,
-  getRateLimitTimeRemaining
-} from './passwordReset';
+export interface LoginCredentials {
+  email: string;
+  password: string;
+}
 
-// ========================================
-// RE-EXPORTACIONES PARA COMPATIBILIDAD
-// ========================================
+export interface RegisterData {
+  email: string;
+  password: string;
+  firstName: string;
+  lastName: string;
+  organizationalUnitId: number;
+  role?: 'admin' | 'input' | 'output';
+}
 
-// Importaciones legacy que otros archivos podrían estar usando
-export type {
-  User as UserType,
-  AuthResponse as AuthResponseType,
-  ApiResponse as ApiResponseType,
-  FieldValidation as ValidationResult
-} from './auth';
+export interface AuthResponse {
+  user: User;
+  accessToken: string;
+  refreshToken: string;
+  expiresIn: number;
+}
 
-export type {
-  PasswordResetRequest as ResetRequest,
-  PasswordResetConfirm as ResetConfirm,
-  PasswordResetError as ResetError
-} from './passwordReset';
+export interface ApiResponse<T = any> {
+  success: boolean;
+  message: string;
+  data?: T;
+  error?: string;
+  timestamp: string;
+}
+
+export interface FieldValidation {
+  isValid: boolean;
+  message: string;
+  type: 'success' | 'error' | 'warning' | '';
+}
+
+// Re-exportar desde passwordReset.ts (que funciona)
+export * from './passwordReset';
