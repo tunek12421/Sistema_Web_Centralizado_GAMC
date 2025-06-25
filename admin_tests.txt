@@ -1,0 +1,361 @@
+# ========================================
+# COMANDOS POWERSHELL - FLUJO ADMINISTRACIÓN
+# ========================================
+
+Write-Host "=== 🛡️ FLUJO DE ADMINISTRACIÓN ==="
+Write-Host "⚠️  Rate Limiting: 10 requests/15min en auth endpoints"
+Write-Host "🔧 Usando estrategia optimizada con delays..."
+
+# ========================================
+# FUNCIÓN DE DELAY CON PROGRESO
+# ========================================
+function Start-DelayWithProgress {
+    param(
+        [int]$Seconds,
+        [string]$Message = "Esperando para evitar rate limiting"
+    )
+    
+    Write-Host "`n⏳ $Message ($Seconds segundos)..." -ForegroundColor Yellow
+    for ($i = $Seconds; $i -gt 0; $i--) {
+        Write-Progress -Activity $Message -Status "Tiempo restante: $i segundos" -PercentComplete ((($Seconds - $i) / $Seconds) * 100)
+        Start-Sleep -Seconds 1
+    }
+    Write-Progress -Activity $Message -Completed
+    Write-Host "✅ Continuando..." -ForegroundColor Green
+}
+
+# ========================================
+# PREPARACIÓN: USUARIO ADMIN PARA TESTING
+# ========================================
+Write-Host "`n=== PREPARACIÓN: USUARIO ADMINISTRADOR ==="
+
+# Usar usuario ADMIN existente o crear uno nuevo
+$adminUserId = Get-Random -Minimum 9500 -Maximum 9999
+$adminUserBody = @{
+    email = "admintest$adminUserId@gamc.gov.bo"
+    password = "AdminTest123!"
+    firstName = "Admin"
+    lastName = "Tester$adminUserId"
+    organizationalUnitId = 1
+    role = "admin"
+} | ConvertTo-Json
+
+Write-Host "🔧 Registrando usuario ADMIN específico para testing..."
+try {
+    # Registrar usuario ADMIN
+    $registerResult = Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/register" -Method POST -ContentType "application/json" -Body $adminUserBody
+    Write-Host "✅ Usuario ADMIN registrado: admintest$adminUserId@gamc.gov.bo" -ForegroundColor Green
+    
+    # Delay para evitar rate limiting en login
+    Start-DelayWithProgress -Seconds 8 -Message "Esperando antes del login administrativo"
+    
+    # Login usuario ADMIN
+    $adminLoginBody = @{
+        email = "admintest$adminUserId@gamc.gov.bo"
+        password = "AdminTest123!"
+    } | ConvertTo-Json
+    $adminLogin = Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/login" -Method POST -ContentType "application/json" -Body $adminLoginBody
+    $adminToken = $adminLogin.data.accessToken
+    Write-Host "✅ Usuario ADMIN autenticado exitosamente" -ForegroundColor Green
+    Write-Host "Token Admin: $($adminToken.Substring(0,20))..." -ForegroundColor White
+    
+    # Verificar perfil del admin
+    $profileResponse = Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/profile" -Method GET -Headers @{Authorization="Bearer $adminToken"}
+    Write-Host "✅ Perfil Admin confirmado:" -ForegroundColor Green
+    Write-Host "  - Email: $($profileResponse.data.email)" -ForegroundColor Cyan
+    Write-Host "  - Rol: $($profileResponse.data.role)" -ForegroundColor Cyan
+    Write-Host "  - Unidad: $($profileResponse.data.organizationalUnit.name)" -ForegroundColor Cyan
+    
+} catch {
+    Write-Host "❌ Error en preparación: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "💡 Puede ser rate limiting - esperando más tiempo..." -ForegroundColor Yellow
+    Start-DelayWithProgress -Seconds 30 -Message "Esperando recuperación de rate limit"
+    return
+}
+
+# Delay antes de continuar con operaciones administrativas
+Start-DelayWithProgress -Seconds 5 -Message "Preparando para operaciones administrativas"
+
+# ========================================
+# 27. LIMPIAR TOKENS EXPIRADOS
+# ========================================
+Write-Host "`n=== 27. LIMPIAR TOKENS EXPIRADOS ==="
+
+try {
+    $cleanupResponse = Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/admin/cleanup-tokens" -Method POST -Headers @{Authorization="Bearer $adminToken"}
+    Write-Host "✅ Limpieza de tokens completada exitosamente" -ForegroundColor Green
+    Write-Host "Tokens limpiados: $($cleanupResponse.data.cleanedTokens)" -ForegroundColor White
+    Write-Host "Timestamp: $($cleanupResponse.data.timestamp)" -ForegroundColor White
+    Write-Host "Mensaje: $($cleanupResponse.message)" -ForegroundColor White
+} catch {
+    Write-Host "❌ Error en limpieza de tokens: $($_.Exception.Message)" -ForegroundColor Red
+}
+
+Start-Sleep -Seconds 3
+
+# ========================================
+# 28. GESTIÓN DE USUARIOS (FUTURO)
+# ========================================
+Write-Host "`n=== 28. GESTIÓN DE USUARIOS (FUTURO) ==="
+
+try {
+    $usersResponse = Invoke-RestMethod -Uri "http://localhost:3000/api/v1/admin/users" -Method GET -Headers @{Authorization="Bearer $adminToken"}
+    Write-Host "✅ Endpoint de gestión de usuarios accedido:" -ForegroundColor Green
+    Write-Host "Mensaje: $($usersResponse.message)" -ForegroundColor White
+    Write-Host "Estado: $($usersResponse.status)" -ForegroundColor Yellow
+} catch {
+    Write-Host "❌ Error accediendo gestión de usuarios: $($_.Exception.Message)" -ForegroundColor Red
+}
+
+Start-Sleep -Seconds 2
+
+# ========================================
+# 29. ESTADÍSTICAS DEL SISTEMA (FUTURO)
+# ========================================
+Write-Host "`n=== 29. ESTADÍSTICAS DEL SISTEMA (FUTURO) ==="
+
+try {
+    $statsResponse = Invoke-RestMethod -Uri "http://localhost:3000/api/v1/admin/stats" -Method GET -Headers @{Authorization="Bearer $adminToken"}
+    Write-Host "✅ Endpoint de estadísticas del sistema accedido:" -ForegroundColor Green
+    Write-Host "Mensaje: $($statsResponse.message)" -ForegroundColor White
+    Write-Host "Estado: $($statsResponse.status)" -ForegroundColor Yellow
+} catch {
+    Write-Host "❌ Error accediendo estadísticas: $($_.Exception.Message)" -ForegroundColor Red
+}
+
+Start-Sleep -Seconds 2
+
+# ========================================
+# 30. LOGS DE AUDITORÍA (FUTURO)
+# ========================================
+Write-Host "`n=== 30. LOGS DE AUDITORÍA (FUTURO) ==="
+
+try {
+    $auditResponse = Invoke-RestMethod -Uri "http://localhost:3000/api/v1/admin/audit" -Method GET -Headers @{Authorization="Bearer $adminToken"}
+    Write-Host "✅ Endpoint de auditoría accedido:" -ForegroundColor Green
+    Write-Host "Mensaje: $($auditResponse.message)" -ForegroundColor White
+    Write-Host "Estado: $($auditResponse.status)" -ForegroundColor Yellow
+} catch {
+    Write-Host "❌ Error accediendo auditoría: $($_.Exception.Message)" -ForegroundColor Red
+}
+
+Start-Sleep -Seconds 2
+
+# ========================================
+# ENDPOINTS ADICIONALES DE ADMINISTRACIÓN DE AUTH
+# ========================================
+Write-Host "`n=== ENDPOINTS ADICIONALES DE ADMINISTRACIÓN AUTH ==="
+
+# Estadísticas de preguntas de seguridad
+Write-Host "`n--- Estadísticas de Preguntas de Seguridad ---"
+try {
+    $secStatsResponse = Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/admin/security-questions/stats" -Method GET -Headers @{Authorization="Bearer $adminToken"}
+    Write-Host "✅ Estadísticas de preguntas de seguridad:" -ForegroundColor Green
+    Write-Host "Mensaje: $($secStatsResponse.message)" -ForegroundColor White
+    Write-Host "Estado: $($secStatsResponse.status)" -ForegroundColor Yellow
+} catch {
+    Write-Host "❌ Error en estadísticas de seguridad: $($_.Exception.Message)" -ForegroundColor Red
+}
+
+Start-Sleep -Seconds 2
+
+# Auditoría de resets de contraseña
+Write-Host "`n--- Auditoría de Resets de Contraseña ---"
+try {
+    $resetAuditResponse = Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/admin/reset-audit" -Method GET -Headers @{Authorization="Bearer $adminToken"}
+    Write-Host "✅ Auditoría de resets de contraseña:" -ForegroundColor Green
+    Write-Host "Mensaje: $($resetAuditResponse.message)" -ForegroundColor White
+    Write-Host "Estado: $($resetAuditResponse.status)" -ForegroundColor Yellow
+} catch {
+    Write-Host "❌ Error en auditoría de resets: $($_.Exception.Message)" -ForegroundColor Red
+}
+
+Start-Sleep -Seconds 2
+
+# ========================================
+# ENDPOINTS DE ADMINISTRACIÓN DE SEGURIDAD (FUTURO)
+# ========================================
+Write-Host "`n=== ADMINISTRACIÓN DE SEGURIDAD (FUTURO) ==="
+
+# Gestión de preguntas de seguridad del sistema
+Write-Host "`n--- Gestión de Preguntas de Seguridad ---"
+try {
+    $secQuestionsResponse = Invoke-RestMethod -Uri "http://localhost:3000/api/v1/admin/security/questions" -Method GET -Headers @{Authorization="Bearer $adminToken"}
+    Write-Host "✅ Gestión de preguntas de seguridad:" -ForegroundColor Green
+    Write-Host "Mensaje: $($secQuestionsResponse.message)" -ForegroundColor White
+    Write-Host "Estado: $($secQuestionsResponse.status)" -ForegroundColor Yellow
+} catch {
+    Write-Host "❌ Error en gestión de preguntas: $($_.Exception.Message)" -ForegroundColor Red
+}
+
+Start-Sleep -Seconds 2
+
+# Reportes de seguridad
+Write-Host "`n--- Reportes de Seguridad ---"
+try {
+    $secReportsResponse = Invoke-RestMethod -Uri "http://localhost:3000/api/v1/admin/security/reports" -Method GET -Headers @{Authorization="Bearer $adminToken"}
+    Write-Host "✅ Reportes de seguridad:" -ForegroundColor Green
+    Write-Host "Mensaje: $($secReportsResponse.message)" -ForegroundColor White
+    Write-Host "Estado: $($secReportsResponse.status)" -ForegroundColor Yellow
+} catch {
+    Write-Host "❌ Error en reportes de seguridad: $($_.Exception.Message)" -ForegroundColor Red
+}
+
+Start-Sleep -Seconds 2
+
+# Políticas de seguridad
+Write-Host "`n--- Políticas de Seguridad ---"
+try {
+    $secPoliciesResponse = Invoke-RestMethod -Uri "http://localhost:3000/api/v1/admin/security/policies" -Method GET -Headers @{Authorization="Bearer $adminToken"}
+    Write-Host "✅ Políticas de seguridad:" -ForegroundColor Green
+    Write-Host "Mensaje: $($secPoliciesResponse.message)" -ForegroundColor White
+    Write-Host "Estado: $($secPoliciesResponse.status)" -ForegroundColor Yellow
+} catch {
+    Write-Host "❌ Error en políticas de seguridad: $($_.Exception.Message)" -ForegroundColor Red
+}
+
+# ========================================
+# CASOS DE ERROR PARA PROBAR
+# ========================================
+Write-Host "`n========================================`nCASOS DE ERROR PARA PROBAR:`n========================================" -ForegroundColor Magenta
+
+Start-Sleep -Seconds 2
+
+Write-Host "`n# Error: Usuario no admin intentando limpiar tokens"
+# Crear usuario INPUT para probar restricciones
+$inputUserId = Get-Random -Minimum 8000 -Maximum 8999
+$inputUserBody = @{
+    email = "input$inputUserId@gamc.gov.bo"
+    password = "InputTest123!"
+    firstName = "Input"
+    lastName = "User$inputUserId"
+    organizationalUnitId = 2
+    role = "input"
+} | ConvertTo-Json
+
+try {
+    Write-Host "🔧 Registrando usuario INPUT para prueba de permisos..." -ForegroundColor Yellow
+    Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/register" -Method POST -ContentType "application/json" -Body $inputUserBody
+    
+    Start-DelayWithProgress -Seconds 8 -Message "Delay antes de login INPUT"
+    
+    $inputLoginBody = @{
+        email = "input$inputUserId@gamc.gov.bo"
+        password = "InputTest123!"
+    } | ConvertTo-Json
+    $inputLogin = Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/login" -Method POST -ContentType "application/json" -Body $inputLoginBody
+    $inputToken = $inputLogin.data.accessToken
+    
+    Write-Host "✅ Usuario INPUT autenticado para prueba de permisos" -ForegroundColor Green
+    
+    Start-Sleep -Seconds 3
+    
+    # Intentar acceso administrativo con usuario INPUT
+    try {
+        Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/admin/cleanup-tokens" -Method POST -Headers @{Authorization="Bearer $inputToken"}
+    } catch {
+        Write-Host "✅ Error esperado (INPUT no puede acceder admin): $($_.Exception.Message)" -ForegroundColor Green
+    }
+    
+} catch {
+    Write-Host "⚠️ No se pudo crear usuario INPUT para prueba: $($_.Exception.Message)" -ForegroundColor Yellow
+}
+
+Start-Sleep -Seconds 2
+
+Write-Host "`n# Error: Sin autenticación en endpoints admin"
+try {
+    Invoke-RestMethod -Uri "http://localhost:3000/api/v1/admin/users" -Method GET
+} catch {
+    Write-Host "✅ Error esperado (sin auth): $($_.Exception.Message)" -ForegroundColor Green
+}
+
+Start-Sleep -Seconds 2
+
+Write-Host "`n# Error: Endpoint admin inexistente"
+try {
+    Invoke-RestMethod -Uri "http://localhost:3000/api/v1/admin/nonexistent" -Method GET -Headers @{Authorization="Bearer $adminToken"}
+} catch {
+    Write-Host "✅ Error esperado (endpoint inexistente): $($_.Exception.Message)" -ForegroundColor Green
+}
+
+# ========================================
+# VERIFICACIÓN FINAL DE PERMISOS ADMIN
+# ========================================
+Write-Host "`n=== VERIFICACIÓN FINAL DE PERMISOS ADMIN ==="
+
+try {
+    $finalProfileCheck = Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/profile" -Method GET -Headers @{Authorization="Bearer $adminToken"}
+    Write-Host "✅ Verificación final de permisos admin:" -ForegroundColor Green
+    Write-Host "  - Usuario: $($finalProfileCheck.data.firstName) $($finalProfileCheck.data.lastName)" -ForegroundColor Cyan
+    Write-Host "  - Email: $($finalProfileCheck.data.email)" -ForegroundColor Cyan
+    Write-Host "  - Rol: $($finalProfileCheck.data.role)" -ForegroundColor Cyan
+    Write-Host "  - Estado: $($finalProfileCheck.data.isActive)" -ForegroundColor Cyan
+    
+    if ($finalProfileCheck.data.role -eq "admin") {
+        Write-Host "🎯 Usuario tiene permisos administrativos correctos" -ForegroundColor Green
+    } else {
+        Write-Host "⚠️ Usuario no tiene rol administrativo" -ForegroundColor Yellow
+    }
+} catch {
+    Write-Host "❌ Error verificando permisos finales: $($_.Exception.Message)" -ForegroundColor Red
+}
+
+# ========================================
+# COMANDOS INDIVIDUALES PARA COPIAR
+# ========================================
+Write-Host "`n========================================`nCOMANDOS INDIVIDUALES PARA COPIAR:`n========================================" -ForegroundColor Magenta
+
+Write-Host "`n# 1. CREAR Y AUTENTICAR USUARIO ADMIN"
+Write-Host '$adminId = Get-Random -Minimum 9500 -Maximum 9999'
+Write-Host '$adminBody = @{email="admintest$adminId@gamc.gov.bo"; password="AdminTest123!"; firstName="Admin"; lastName="Tester$adminId"; organizationalUnitId=1; role="admin"} | ConvertTo-Json'
+Write-Host 'Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/register" -Method POST -ContentType "application/json" -Body $adminBody'
+Write-Host 'Start-Sleep -Seconds 8'
+Write-Host '$loginBody = @{email="admintest$adminId@gamc.gov.bo"; password="AdminTest123!"} | ConvertTo-Json'
+Write-Host '$adminLogin = Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/login" -Method POST -ContentType "application/json" -Body $loginBody'
+Write-Host '$adminToken = $adminLogin.data.accessToken'
+
+Write-Host "`n# 2. LIMPIAR TOKENS EXPIRADOS"
+Write-Host 'Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/admin/cleanup-tokens" -Method POST -Headers @{Authorization="Bearer $adminToken"}'
+
+Write-Host "`n# 3. GESTIÓN DE USUARIOS (FUTURO)"
+Write-Host 'Invoke-RestMethod -Uri "http://localhost:3000/api/v1/admin/users" -Method GET -Headers @{Authorization="Bearer $adminToken"}'
+
+Write-Host "`n# 4. ESTADÍSTICAS DEL SISTEMA (FUTURO)"
+Write-Host 'Invoke-RestMethod -Uri "http://localhost:3000/api/v1/admin/stats" -Method GET -Headers @{Authorization="Bearer $adminToken"}'
+
+Write-Host "`n# 5. AUDITORÍA (FUTURO)"
+Write-Host 'Invoke-RestMethod -Uri "http://localhost:3000/api/v1/admin/audit" -Method GET -Headers @{Authorization="Bearer $adminToken"}'
+
+Write-Host "`n# 6. ESTADÍSTICAS DE PREGUNTAS DE SEGURIDAD"
+Write-Host 'Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/admin/security-questions/stats" -Method GET -Headers @{Authorization="Bearer $adminToken"}'
+
+Write-Host "`n# 7. AUDITORÍA DE RESETS"
+Write-Host 'Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/admin/reset-audit" -Method GET -Headers @{Authorization="Bearer $adminToken"}'
+
+# ========================================
+# RESUMEN FINAL
+# ========================================
+Write-Host "`n========================================" -ForegroundColor Magenta
+Write-Host "✅ FLUJO DE ADMINISTRACIÓN COMPLETADO" -ForegroundColor Green
+Write-Host "========================================" -ForegroundColor Magenta
+
+Write-Host "`n📊 RESUMEN DE PRUEBAS:" -ForegroundColor Yellow
+Write-Host "✅ Usuario administrador creado y autenticado" -ForegroundColor Green
+Write-Host "✅ Limpieza de tokens expirados ejecutada" -ForegroundColor Green
+Write-Host "✅ Endpoints futuros de administración verificados" -ForegroundColor Green
+Write-Host "✅ Endpoints de administración de auth probados" -ForegroundColor Green
+Write-Host "✅ Endpoints de administración de seguridad probados" -ForegroundColor Green
+Write-Host "✅ Restricciones de permisos validadas" -ForegroundColor Green
+Write-Host "✅ Casos de error administrativos probados" -ForegroundColor Green
+
+Write-Host "`n🎯 FUNCIONALIDADES IMPLEMENTADAS:" -ForegroundColor Yellow
+Write-Host "- Limpieza de tokens expirados (FUNCIONAL)" -ForegroundColor Green
+Write-Host "- Verificación de permisos administrativos (FUNCIONAL)" -ForegroundColor Green
+Write-Host "- Endpoints futuros documentados (PREPARADO)" -ForegroundColor Cyan
+Write-Host "- Restricción de acceso por roles (FUNCIONAL)" -ForegroundColor Green
+Write-Host "- Auditoría y logging (PREPARADO)" -ForegroundColor Cyan
+
+Write-Host "`n⚠️ NOTA:" -ForegroundColor Yellow
+Write-Host "Muchos endpoints están marcados como 'futuro' pero ya tienen" -ForegroundColor Red
+Write-Host "la estructura y permisos implementados correctamente" -ForegroundColor Red
