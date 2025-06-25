@@ -83,6 +83,33 @@ CREATE TABLE user_sessions (
 );
 
 -- ========================================
+-- TABLA PARA RESET DE CONTRASEÑAS
+-- ========================================
+
+-- Tabla de tokens de reset de contraseña
+CREATE TABLE password_reset_tokens (
+    id SERIAL PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token VARCHAR(255) UNIQUE NOT NULL,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    used_at TIMESTAMP WITH TIME ZONE NULL,
+    request_ip VARCHAR(45) NOT NULL,
+    user_agent TEXT,
+    is_active BOOLEAN DEFAULT true,
+    
+    -- Metadatos adicionales para auditoría
+    email_sent_at TIMESTAMP WITH TIME ZONE,
+    email_opened_at TIMESTAMP WITH TIME ZONE,
+    attempts_count INTEGER DEFAULT 0,
+    
+    -- Constraints
+    CONSTRAINT chk_expires_future CHECK (expires_at > created_at),
+    CONSTRAINT chk_used_after_created CHECK (used_at IS NULL OR used_at >= created_at),
+    CONSTRAINT chk_attempts_positive CHECK (attempts_count >= 0)
+);
+
+-- ========================================
 -- TABLAS PRINCIPALES DE MENSAJERÍA
 -- ========================================
 
@@ -203,6 +230,12 @@ CREATE INDEX idx_users_org_unit ON users(organizational_unit_id);
 CREATE INDEX idx_users_role ON users(role);
 CREATE INDEX idx_users_active ON users(is_active);
 
+-- Índices para password reset tokens
+CREATE UNIQUE INDEX idx_password_reset_tokens_token ON password_reset_tokens (token) WHERE is_active = true;
+CREATE INDEX idx_password_reset_tokens_user_id ON password_reset_tokens (user_id, is_active);
+CREATE INDEX idx_password_reset_tokens_expires ON password_reset_tokens (expires_at) WHERE is_active = true;
+CREATE INDEX idx_password_reset_tokens_ip_created ON password_reset_tokens (request_ip, created_at);
+
 -- Índices para mensajes
 CREATE INDEX idx_messages_sender ON messages(sender_id);
 CREATE INDEX idx_messages_sender_unit ON messages(sender_unit_id);
@@ -230,6 +263,48 @@ CREATE INDEX idx_fact_messages_sender_unit ON fact_messages(sender_unit_id);
 CREATE INDEX idx_fact_messages_receiver_unit ON fact_messages(receiver_unit_id);
 
 -- ========================================
+-- FUNCIONES DE UTILIDAD PARA PASSWORD RESET
+-- ========================================
+
+-- Función para generar token único
+CREATE OR REPLACE FUNCTION generate_reset_token()
+RETURNS VARCHAR(255) AS $$
+BEGIN
+    RETURN encode(gen_random_bytes(32), 'hex');
+END;
+$$ LANGUAGE plpgsql;
+
+-- Función para limpiar tokens expirados automáticamente
+CREATE OR REPLACE FUNCTION cleanup_expired_reset_tokens()
+RETURNS INTEGER AS $$
+DECLARE
+    cleaned_count INTEGER;
+BEGIN
+    -- Marcar como inactivos los tokens expirados
+    UPDATE password_reset_tokens 
+    SET is_active = false
+    WHERE is_active = true 
+      AND expires_at < NOW();
+    
+    GET DIAGNOSTICS cleaned_count = ROW_COUNT;
+    
+    -- Log para auditoría
+    INSERT INTO audit_logs (user_id, action, resource, resource_id, old_values, result, ip_address)
+    VALUES (
+        NULL,
+        'CLEANUP',
+        'password_reset_tokens',
+        'expired_tokens',
+        jsonb_build_object('cleaned_count', cleaned_count, 'timestamp', NOW()),
+        'success',
+        'system'
+    );
+    
+    RETURN cleaned_count;
+END;
+$$ LANGUAGE plpgsql;
+
+-- ========================================
 -- TRIGGERS PARA ACTUALIZACIÓN AUTOMÁTICA
 -- ========================================
 
@@ -242,6 +317,66 @@ BEGIN
 END;
 $$ language 'plpgsql';
 
+-- Trigger para validar email institucional antes de crear token
+CREATE OR REPLACE FUNCTION validate_reset_request()
+RETURNS TRIGGER AS $$
+DECLARE
+    user_email VARCHAR(100);
+    user_active BOOLEAN;
+BEGIN
+    -- Obtener datos del usuario
+    SELECT email, is_active INTO user_email, user_active
+    FROM users 
+    WHERE id = NEW.user_id;
+    
+    -- Validar que el usuario existe y está activo
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Usuario no encontrado'
+            USING ERRCODE = 'foreign_key_violation';
+    END IF;
+    
+    IF NOT user_active THEN
+        RAISE EXCEPTION 'Usuario inactivo no puede solicitar reset de contraseña'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    
+    -- VALIDACIÓN PRINCIPAL: Solo emails institucionales
+    IF user_email NOT LIKE '%@gamc.gov.bo' THEN
+        RAISE EXCEPTION 'Solo usuarios con email @gamc.gov.bo pueden solicitar reset de contraseña'
+            USING ERRCODE = 'check_violation',
+                  HINT = 'Contacte al administrador para cambio de contraseña';
+    END IF;
+    
+    -- Validar que no hay tokens activos recientes (prevenir spam)
+    IF EXISTS (
+        SELECT 1 FROM password_reset_tokens 
+        WHERE user_id = NEW.user_id 
+          AND is_active = true 
+          AND created_at > (NOW() - INTERVAL '5 minutes')
+    ) THEN
+        RAISE EXCEPTION 'Debe esperar 5 minutos entre solicitudes de reset'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    
+    -- Invalidar tokens anteriores del mismo usuario
+    UPDATE password_reset_tokens 
+    SET is_active = false 
+    WHERE user_id = NEW.user_id AND is_active = true;
+    
+    -- Generar token único si no se proporcionó
+    IF NEW.token IS NULL OR NEW.token = '' THEN
+        NEW.token := generate_reset_token();
+    END IF;
+    
+    -- Establecer expiración por defecto (30 minutos)
+    IF NEW.expires_at IS NULL THEN
+        NEW.expires_at := NOW() + INTERVAL '30 minutes';
+    END IF;
+    
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
 -- Triggers para updated_at
 CREATE TRIGGER update_organizational_units_updated_at BEFORE UPDATE ON organizational_units
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
@@ -251,6 +386,12 @@ CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON users
 
 CREATE TRIGGER update_messages_updated_at BEFORE UPDATE ON messages
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Trigger para validar password reset
+CREATE TRIGGER trigger_validate_reset_request
+    BEFORE INSERT ON password_reset_tokens
+    FOR EACH ROW
+    EXECUTE FUNCTION validate_reset_request();
 
 -- ========================================
 -- FUNCIÓN PARA POPULAR DIMENSIONES DE TIEMPO
@@ -355,5 +496,44 @@ SELECT
     (SELECT COUNT(*) FROM users WHERE organizational_unit_id = ou.id AND is_active = true) as active_users
 FROM organizational_units ou
 WHERE ou.is_active = true;
+
+-- Vista para auditoría de resets de contraseña
+CREATE VIEW v_password_reset_audit AS
+SELECT 
+    prt.id,
+    prt.user_id,
+    u.email,
+    u.first_name,
+    u.last_name,
+    ou.name as organizational_unit,
+    prt.created_at,
+    prt.expires_at,
+    prt.used_at,
+    prt.request_ip,
+    prt.attempts_count,
+    CASE 
+        WHEN prt.used_at IS NOT NULL THEN 'USED'
+        WHEN prt.expires_at < NOW() THEN 'EXPIRED'
+        WHEN prt.is_active THEN 'ACTIVE'
+        ELSE 'INACTIVE'
+    END as status,
+    EXTRACT(EPOCH FROM (prt.expires_at - prt.created_at))/60 as duration_minutes
+FROM password_reset_tokens prt
+JOIN users u ON prt.user_id = u.id
+JOIN organizational_units ou ON u.organizational_unit_id = ou.id
+ORDER BY prt.created_at DESC;
+
+-- ========================================
+-- COMENTARIOS PARA DOCUMENTACIÓN
+-- ========================================
+
+COMMENT ON TABLE password_reset_tokens IS 'Tokens de reset de contraseña para usuarios institucionales (@gamc.gov.bo)';
+COMMENT ON COLUMN password_reset_tokens.token IS 'Token único de 64 caracteres hex para reset';
+COMMENT ON COLUMN password_reset_tokens.expires_at IS 'Expiración del token (30 minutos por defecto)';
+COMMENT ON COLUMN password_reset_tokens.used_at IS 'Timestamp cuando se usó el token (previene reutilización)';
+COMMENT ON COLUMN password_reset_tokens.request_ip IS 'IP desde donde se solicitó el reset';
+COMMENT ON COLUMN password_reset_tokens.attempts_count IS 'Número de intentos de uso del token';
+COMMENT ON COLUMN password_reset_tokens.email_sent_at IS 'Cuándo se envió el email de reset';
+COMMENT ON COLUMN password_reset_tokens.email_opened_at IS 'Cuándo el usuario abrió el email (tracking)';
 
 COMMENT ON DATABASE postgres IS 'GAMC Sistema Web Centralizado - Base de Datos Principal';

@@ -69,6 +69,23 @@ func SetupRoutes(appCtx *config.AppContext) *gin.Engine {
 				authRateLimit,
 				authHandler.RefreshToken)
 
+			// ========================================
+			// RUTAS PÚBLICAS DE RESET DE CONTRASEÑA
+			// ========================================
+
+			// Solicitar reset de contraseña (público)
+			auth.POST("/forgot-password",
+				authRateLimit,
+				middleware.UserActivityLogger("PASSWORD_RESET_REQUEST"),
+				authHandler.RequestPasswordReset)
+
+			// Confirmar reset de contraseña (público)
+			auth.POST("/reset-password",
+				authRateLimit,
+				middleware.NoCache(),
+				middleware.UserActivityLogger("PASSWORD_RESET_CONFIRM"),
+				authHandler.ConfirmPasswordReset)
+
 			// Rutas protegidas de auth
 			protected := auth.Group("/")
 			protected.Use(middleware.AuthMiddleware(appCtx))
@@ -89,6 +106,31 @@ func SetupRoutes(appCtx *config.AppContext) *gin.Engine {
 
 				protected.GET("/verify",
 					authHandler.VerifyToken)
+
+				// ========================================
+				// RUTAS PROTEGIDAS DE RESET (usuarios autenticados)
+				// ========================================
+
+				// Ver estado de reset del usuario actual
+				protected.GET("/reset-status",
+					middleware.UserActivityLogger("GET_RESET_STATUS"),
+					authHandler.GetPasswordResetStatus)
+			}
+
+			// ========================================
+			// RUTAS DE ADMINISTRACIÓN DE RESET (solo admins)
+			// ========================================
+
+			adminReset := auth.Group("/admin")
+			adminReset.Use(middleware.AuthMiddleware(appCtx))
+			adminReset.Use(middleware.RequireRole("admin"))
+			{
+				// Limpiar tokens expirados (solo admins)
+				adminReset.POST("/cleanup-tokens",
+					authRateLimit,
+					middleware.NoCache(),
+					middleware.UserActivityLogger("CLEANUP_RESET_TOKENS"),
+					authHandler.CleanupExpiredTokens)
 			}
 		}
 
@@ -161,7 +203,7 @@ func SetupRoutes(appCtx *config.AppContext) *gin.Engine {
 
 		admin := apiV1.Group("/admin")
 		admin.Use(middleware.AuthMiddleware(appCtx))
-		admin.Use(middleware.RequireAdmin())
+		admin.Use(middleware.RequireRole("admin"))
 		{
 			// Gestión de usuarios
 			admin.GET("/users", func(c *gin.Context) {
@@ -236,26 +278,3 @@ func SetupRoutes(appCtx *config.AppContext) *gin.Engine {
 
 	return router
 }
-
-/*
-========================================
-CAMBIOS APLICADOS EN ESTA VERSIÓN LIMPIA:
-========================================
-
-ELIMINADAS COMPLETAMENTE las siguientes líneas:
-- middleware.RequireOutputRole() en GET /messages
-- middleware.RequireInputRole() en POST /messages
-- middleware.RequireOutputRole() en PUT /messages/:id/status
-
-RESULTADO ESPERADO:
-- GET /api/v1/messages/ → 6 handlers (no 7)
-- POST /api/v1/messages/ → 6 handlers (no 7)
-- PUT /api/v1/messages/:id/status → 6 handlers (no 7)
-
-DESPUÉS DE APLICAR ESTE ARCHIVO:
-1. Guardar como gamc-backend-go/internal/api/routes/routes.go
-2. docker-compose build gamc-backend-go --no-cache
-3. docker-compose up -d
-4. Verificar logs: docker-compose logs gamc-backend-go | findstr "messages"
-5. Confirmar que muestra 6 handlers en lugar de 7
-*/

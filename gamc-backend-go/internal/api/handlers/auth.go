@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"gamc-backend-go/internal/config"
+	"gamc-backend-go/internal/database/models"
 	"gamc-backend-go/internal/services"
 	"gamc-backend-go/pkg/response"
 	"gamc-backend-go/pkg/validator"
@@ -237,5 +238,132 @@ func (h *AuthHandler) VerifyToken(c *gin.Context) {
 		"valid":  true,
 		"userID": userID,
 		"user":   user,
+	})
+}
+
+// ========================================
+// HANDLERS DE RESET DE CONTRASEÑA
+// ========================================
+
+// RequestPasswordReset maneja POST /api/v1/auth/forgot-password
+func (h *AuthHandler) RequestPasswordReset(c *gin.Context) {
+	var req models.PasswordResetRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, "Datos de entrada inválidos", err.Error())
+		return
+	}
+
+	// Validar datos de entrada
+	if err := validator.Validate(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, "Datos de entrada inválidos", err.Error())
+		return
+	}
+
+	// Obtener información del cliente
+	ipAddress := c.ClientIP()
+	userAgent := c.GetHeader("User-Agent")
+
+	// Ejecutar solicitud de reset
+	err := h.authService.RequestPasswordReset(c.Request.Context(), &req, ipAddress, userAgent)
+	if err != nil {
+		// Clasificar errores por tipo
+		if err.Error() == "solo usuarios con email @gamc.gov.bo pueden solicitar reset de contraseña" {
+			response.Error(c, http.StatusForbidden, "Email no autorizado", "Solo usuarios con email @gamc.gov.bo pueden solicitar reset de contraseña")
+			return
+		}
+		if err.Error() == "debe esperar 5 minutos entre solicitudes de reset" {
+			response.Error(c, http.StatusTooManyRequests, "Demasiadas solicitudes", "Debe esperar 5 minutos entre solicitudes de reset")
+			return
+		}
+		response.Error(c, http.StatusInternalServerError, "Error interno", "Error al procesar solicitud de reset")
+		return
+	}
+
+	// Respuesta exitosa (siempre igual por seguridad)
+	response.Success(c, "Solicitud de reset procesada", gin.H{
+		"message": "Si el email existe y es válido, recibirás un enlace de reset en tu correo institucional",
+		"note":    "Solo emails @gamc.gov.bo pueden solicitar reset de contraseña",
+	})
+}
+
+// ConfirmPasswordReset maneja POST /api/v1/auth/reset-password
+func (h *AuthHandler) ConfirmPasswordReset(c *gin.Context) {
+	var req models.PasswordResetConfirm
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, "Datos de entrada inválidos", err.Error())
+		return
+	}
+
+	// Validar datos de entrada
+	if err := validator.Validate(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, "Datos de entrada inválidos", err.Error())
+		return
+	}
+
+	// Obtener información del cliente
+	ipAddress := c.ClientIP()
+
+	// Ejecutar confirmación de reset
+	err := h.authService.ConfirmPasswordReset(c.Request.Context(), &req, ipAddress)
+	if err != nil {
+		// Clasificar errores por tipo
+		if err.Error() == "token de reset inválido o expirado" {
+			response.Error(c, http.StatusBadRequest, "Token inválido", "El token de reset es inválido o ha expirado")
+			return
+		}
+		if err.Error() == "token de reset expirado" {
+			response.Error(c, http.StatusBadRequest, "Token expirado", "El token de reset ha expirado. Solicite un nuevo reset")
+			return
+		}
+		if err.Error() == "token de reset ya utilizado" {
+			response.Error(c, http.StatusBadRequest, "Token usado", "Este token ya fue utilizado. Solicite un nuevo reset si es necesario")
+			return
+		}
+		response.Error(c, http.StatusBadRequest, "Error en reset", err.Error())
+		return
+	}
+
+	response.Success(c, "Contraseña resetiada exitosamente", gin.H{
+		"message": "Su contraseña ha sido cambiada exitosamente. Por seguridad, se han cerrado todas sus sesiones activas",
+		"note":    "Inicie sesión con su nueva contraseña",
+	})
+}
+
+// GetPasswordResetStatus maneja GET /api/v1/auth/reset-status (endpoint protegido para admins)
+func (h *AuthHandler) GetPasswordResetStatus(c *gin.Context) {
+	// Este endpoint está protegido por middleware de autenticación
+	userID, exists := c.Get("userID")
+	if !exists {
+		response.Error(c, http.StatusUnauthorized, "Usuario no autenticado", "")
+		return
+	}
+
+	// Obtener estado de tokens de reset
+	tokens, err := h.authService.GetPasswordResetStatus(c.Request.Context(), userID.(string))
+	if err != nil {
+		response.Error(c, http.StatusInternalServerError, "Error al obtener estado", err.Error())
+		return
+	}
+
+	response.Success(c, "Estado de reset obtenido", gin.H{
+		"tokens": tokens,
+		"count":  len(tokens),
+	})
+}
+
+// CleanupExpiredTokens maneja POST /api/v1/auth/cleanup-tokens (endpoint protegido para admins)
+func (h *AuthHandler) CleanupExpiredTokens(c *gin.Context) {
+	// Este endpoint está protegido por middleware de autenticación y requiere rol admin
+
+	// Ejecutar limpieza
+	cleanedCount, err := h.authService.CleanupExpiredResetTokens(c.Request.Context())
+	if err != nil {
+		response.Error(c, http.StatusInternalServerError, "Error en limpieza", err.Error())
+		return
+	}
+
+	response.Success(c, "Limpieza completada", gin.H{
+		"cleanedTokens": cleanedCount,
+		"timestamp":     time.Now(),
 	})
 }

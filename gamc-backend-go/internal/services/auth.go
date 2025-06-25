@@ -2,6 +2,8 @@ package services
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -357,6 +359,213 @@ func (s *AuthService) GetUserProfile(ctx context.Context, userID string) (*model
 	}
 
 	return user.ToProfile(), nil
+}
+
+// ========================================
+// FUNCIONES DE RESET DE CONTRASEÑA
+// ========================================
+
+// RequestPasswordReset solicita un reset de contraseña
+func (s *AuthService) RequestPasswordReset(ctx context.Context, req *models.PasswordResetRequest, requestIP, userAgent string) error {
+	// Buscar usuario por email
+	var user models.User
+	err := s.db.WithContext(ctx).
+		Where("email = ? AND is_active = ?", req.Email, true).
+		First(&user).Error
+
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			// Por seguridad, no revelar que el email no existe
+			logger.Info("Intento de reset para email no existente: %s desde IP: %s", req.Email, requestIP)
+			return nil // Retornar éxito silencioso
+		}
+		return fmt.Errorf("error al buscar usuario: %w", err)
+	}
+
+	// Validar que es email institucional (doble validación)
+	if !strings.HasSuffix(user.Email, "@gamc.gov.bo") {
+		logger.Warn("Intento de reset para email no institucional: %s desde IP: %s", user.Email, requestIP)
+		return fmt.Errorf("solo usuarios con email @gamc.gov.bo pueden solicitar reset de contraseña")
+	}
+
+	// Generar token único
+	token, err := s.generateResetToken()
+	if err != nil {
+		return fmt.Errorf("error al generar token: %w", err)
+	}
+
+	// Crear registro de reset token
+	resetToken := &models.PasswordResetToken{
+		UserID:    user.ID,
+		Token:     token,
+		ExpiresAt: time.Now().Add(30 * time.Minute), // 30 minutos
+		RequestIP: requestIP,
+		UserAgent: &userAgent,
+		IsActive:  true,
+	}
+
+	// Guardar token (el trigger de DB validará automáticamente)
+	if err := s.db.WithContext(ctx).Create(resetToken).Error; err != nil {
+		if strings.Contains(err.Error(), "Solo usuarios con email @gamc.gov.bo") {
+			return fmt.Errorf("solo usuarios con email @gamc.gov.bo pueden solicitar reset de contraseña")
+		}
+		if strings.Contains(err.Error(), "Debe esperar 5 minutos") {
+			return fmt.Errorf("debe esperar 5 minutos entre solicitudes de reset")
+		}
+		return fmt.Errorf("error al crear token de reset: %w", err)
+	}
+
+	// Marcar email como enviado (por ahora simulado)
+	resetToken.MarkEmailSent()
+	s.db.WithContext(ctx).Save(resetToken)
+
+	logger.Info("Token de reset creado para usuario %s desde IP %s", user.Email, requestIP)
+
+	// TODO: Aquí enviar email real cuando se implemente el servicio de email
+	logger.Info("Email de reset enviado a: %s", user.Email)
+
+	return nil
+}
+
+// ConfirmPasswordReset confirma y ejecuta el reset de contraseña
+func (s *AuthService) ConfirmPasswordReset(ctx context.Context, req *models.PasswordResetConfirm, requestIP string) error {
+	// Buscar token válido
+	var resetToken models.PasswordResetToken
+	err := s.db.WithContext(ctx).
+		Preload("User").
+		Where("token = ? AND is_active = ?", req.Token, true).
+		First(&resetToken).Error
+
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("token de reset inválido o expirado")
+		}
+		return fmt.Errorf("error al buscar token: %w", err)
+	}
+
+	// Validar token
+	if !resetToken.IsValid() {
+		resetToken.IncrementAttempts()
+		s.db.WithContext(ctx).Save(&resetToken)
+
+		if resetToken.IsExpired() {
+			return fmt.Errorf("token de reset expirado")
+		}
+		if resetToken.IsUsed() {
+			return fmt.Errorf("token de reset ya utilizado")
+		}
+		return fmt.Errorf("token de reset inválido")
+	}
+
+	// Validar nueva contraseña
+	if isValid, validationErrors := s.passwordService.IsValidPassword(req.NewPassword); !isValid {
+		resetToken.IncrementAttempts()
+		s.db.WithContext(ctx).Save(&resetToken)
+		return fmt.Errorf("nueva contraseña inválida: %v", validationErrors)
+	}
+
+	// Hashear nueva contraseña
+	newPasswordHash, err := s.passwordService.HashPassword(req.NewPassword)
+	if err != nil {
+		return fmt.Errorf("error al hashear nueva contraseña: %w", err)
+	}
+
+	// Transacción para actualizar contraseña y marcar token como usado
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Actualizar contraseña del usuario
+		if err := tx.Model(&resetToken.User).Updates(map[string]interface{}{
+			"password_hash":       newPasswordHash,
+			"password_changed_at": time.Now(),
+		}).Error; err != nil {
+			return fmt.Errorf("error al actualizar contraseña: %w", err)
+		}
+
+		// Marcar token como usado
+		resetToken.MarkAsUsed()
+		if err := tx.Save(&resetToken).Error; err != nil {
+			return fmt.Errorf("error al marcar token como usado: %w", err)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return err
+	}
+
+	// Invalidar todas las sesiones del usuario (logout forzado)
+	if err := s.invalidateUserSessions(ctx, resetToken.User.ID.String()); err != nil {
+		logger.Warn("Error al invalidar sesiones del usuario %s: %v", resetToken.User.Email, err)
+		// No retornar error, el reset fue exitoso
+	}
+
+	logger.Info("Contraseña resetiada exitosamente para usuario %s desde IP %s", resetToken.User.Email, requestIP)
+
+	return nil
+}
+
+// GetPasswordResetStatus obtiene el estado de los tokens de reset de un usuario
+func (s *AuthService) GetPasswordResetStatus(ctx context.Context, userID string) ([]models.PasswordResetToken, error) {
+	var tokens []models.PasswordResetToken
+	err := s.db.WithContext(ctx).
+		Where("user_id = ?", userID).
+		Order("created_at DESC").
+		Limit(5). // Solo los últimos 5 intentos
+		Find(&tokens).Error
+
+	if err != nil {
+		return nil, fmt.Errorf("error al obtener tokens de reset: %w", err)
+	}
+
+	return tokens, nil
+}
+
+// CleanupExpiredResetTokens limpia tokens expirados (para cron job)
+func (s *AuthService) CleanupExpiredResetTokens(ctx context.Context) (int, error) {
+	// Usar la función SQL ya creada
+	var cleanedCount int
+	err := s.db.WithContext(ctx).Raw("SELECT cleanup_expired_reset_tokens()").Scan(&cleanedCount).Error
+	if err != nil {
+		return 0, fmt.Errorf("error al limpiar tokens expirados: %w", err)
+	}
+
+	logger.Info("Tokens de reset expirados limpiados: %d", cleanedCount)
+	return cleanedCount, nil
+}
+
+// ========================================
+// FUNCIONES AUXILIARES PRIVADAS
+// ========================================
+
+// generateResetToken genera un token único de 64 caracteres
+func (s *AuthService) generateResetToken() (string, error) {
+	bytes := make([]byte, 32) // 32 bytes = 64 caracteres hex
+	if _, err := rand.Read(bytes); err != nil {
+		return "", fmt.Errorf("error al generar bytes aleatorios: %w", err)
+	}
+	return hex.EncodeToString(bytes), nil
+}
+
+// invalidateUserSessions invalida todas las sesiones de un usuario
+func (s *AuthService) invalidateUserSessions(ctx context.Context, userID string) error {
+	// Obtener todas las sesiones del usuario
+	sessions, err := s.sessionManager.GetUserSessions(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("error al obtener sesiones: %w", err)
+	}
+
+	// Eliminar cada sesión
+	for _, sessionID := range sessions {
+		if err := s.sessionManager.DeleteSession(ctx, sessionID); err != nil {
+			logger.Warn("Error al eliminar sesión %s: %v", sessionID, err)
+		}
+		if err := s.refreshManager.DeleteRefreshToken(ctx, userID, sessionID); err != nil {
+			logger.Warn("Error al eliminar refresh token %s: %v", sessionID, err)
+		}
+	}
+
+	logger.Info("Sesiones invalidadas para usuario %s: %d sesiones", userID, len(sessions))
+	return nil
 }
 
 // generateUniqueUsername genera un username único basado en el contexto GAMC
