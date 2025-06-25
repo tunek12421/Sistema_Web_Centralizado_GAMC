@@ -54,7 +54,10 @@ func SetupRoutes(appCtx *config.AppContext) *gin.Engine {
 			// Rate limiting específico para auth
 			authRateLimit := middleware.UserRateLimitMiddleware(10, 15*time.Minute)
 
-			// Rutas públicas de auth
+			// ========================================
+			// RUTAS PÚBLICAS DE AUTENTICACIÓN
+			// ========================================
+
 			auth.POST("/login",
 				authRateLimit,
 				middleware.UserActivityLogger("LOGIN_ATTEMPT"),
@@ -70,6 +73,14 @@ func SetupRoutes(appCtx *config.AppContext) *gin.Engine {
 				authHandler.RefreshToken)
 
 			// ========================================
+			// RUTAS PÚBLICAS DE PREGUNTAS DE SEGURIDAD
+			// ========================================
+
+			// Obtener catálogo de preguntas de seguridad (público para registro)
+			auth.GET("/security-questions",
+				authHandler.GetSecurityQuestions)
+
+			// ========================================
 			// RUTAS PÚBLICAS DE RESET DE CONTRASEÑA
 			// ========================================
 
@@ -79,6 +90,19 @@ func SetupRoutes(appCtx *config.AppContext) *gin.Engine {
 				middleware.UserActivityLogger("PASSWORD_RESET_REQUEST"),
 				authHandler.RequestPasswordReset)
 
+			// Obtener estado de proceso de reset por email (público)
+			auth.GET("/reset-status",
+				authRateLimit,
+				middleware.UserActivityLogger("GET_RESET_STATUS"),
+				authHandler.GetPasswordResetStatus)
+
+			// Verificar pregunta de seguridad durante reset (público con token)
+			auth.POST("/verify-security-question",
+				authRateLimit,
+				middleware.NoCache(),
+				middleware.UserActivityLogger("VERIFY_SECURITY_QUESTION"),
+				authHandler.VerifySecurityQuestion)
+
 			// Confirmar reset de contraseña (público)
 			auth.POST("/reset-password",
 				authRateLimit,
@@ -86,10 +110,14 @@ func SetupRoutes(appCtx *config.AppContext) *gin.Engine {
 				middleware.UserActivityLogger("PASSWORD_RESET_CONFIRM"),
 				authHandler.ConfirmPasswordReset)
 
-			// Rutas protegidas de auth
+			// ========================================
+			// RUTAS PROTEGIDAS DE AUTENTICACIÓN
+			// ========================================
+
 			protected := auth.Group("/")
 			protected.Use(middleware.AuthMiddleware(appCtx))
 			{
+				// Operaciones básicas de autenticación
 				protected.POST("/logout",
 					middleware.UserActivityLogger("LOGOUT"),
 					authHandler.Logout)
@@ -108,29 +136,75 @@ func SetupRoutes(appCtx *config.AppContext) *gin.Engine {
 					authHandler.VerifyToken)
 
 				// ========================================
-				// RUTAS PROTEGIDAS DE RESET (usuarios autenticados)
+				// RUTAS PROTEGIDAS DE PREGUNTAS DE SEGURIDAD
 				// ========================================
 
-				// Ver estado de reset del usuario actual
-				protected.GET("/reset-status",
-					middleware.UserActivityLogger("GET_RESET_STATUS"),
-					authHandler.GetPasswordResetStatus)
+				// Obtener estado de preguntas de seguridad del usuario
+				protected.GET("/security-status",
+					middleware.UserActivityLogger("GET_SECURITY_STATUS"),
+					authHandler.GetUserSecurityStatus)
+
+				// Configurar preguntas de seguridad
+				protected.POST("/security-questions",
+					authRateLimit,
+					middleware.NoCache(),
+					middleware.UserActivityLogger("SETUP_SECURITY_QUESTIONS"),
+					authHandler.SetupSecurityQuestions)
+
+				// Actualizar una pregunta de seguridad específica
+				protected.PUT("/security-questions/:questionId",
+					authRateLimit,
+					middleware.NoCache(),
+					middleware.UserActivityLogger("UPDATE_SECURITY_QUESTION"),
+					authHandler.UpdateSecurityQuestion)
+
+				// Eliminar una pregunta de seguridad específica
+				protected.DELETE("/security-questions/:questionId",
+					authRateLimit,
+					middleware.NoCache(),
+					middleware.UserActivityLogger("REMOVE_SECURITY_QUESTION"),
+					authHandler.RemoveSecurityQuestion)
+
+				// ========================================
+				// RUTAS PROTEGIDAS DE HISTORIAL DE RESET
+				// ========================================
+
+				// Ver historial de reset del usuario actual
+				protected.GET("/reset-history",
+					middleware.UserActivityLogger("GET_RESET_HISTORY"),
+					authHandler.GetPasswordResetHistory)
 			}
 
 			// ========================================
-			// RUTAS DE ADMINISTRACIÓN DE RESET (solo admins)
+			// RUTAS DE ADMINISTRACIÓN DE AUTH (solo admins)
 			// ========================================
 
-			adminReset := auth.Group("/admin")
-			adminReset.Use(middleware.AuthMiddleware(appCtx))
-			adminReset.Use(middleware.RequireRole("admin"))
+			adminAuth := auth.Group("/admin")
+			adminAuth.Use(middleware.AuthMiddleware(appCtx))
+			adminAuth.Use(middleware.RequireRole("admin"))
 			{
 				// Limpiar tokens expirados (solo admins)
-				adminReset.POST("/cleanup-tokens",
+				adminAuth.POST("/cleanup-tokens",
 					authRateLimit,
 					middleware.NoCache(),
 					middleware.UserActivityLogger("CLEANUP_RESET_TOKENS"),
 					authHandler.CleanupExpiredTokens)
+
+				// Gestión de preguntas de seguridad (futuro)
+				adminAuth.GET("/security-questions/stats", func(c *gin.Context) {
+					c.JSON(200, gin.H{
+						"message": "Security questions stats - futuro",
+						"status":  "coming_soon",
+					})
+				})
+
+				// Auditoría de resets de contraseña (futuro)
+				adminAuth.GET("/reset-audit", func(c *gin.Context) {
+					c.JSON(200, gin.H{
+						"message": "Password reset audit - futuro",
+						"status":  "coming_soon",
+					})
+				})
 			}
 		}
 
@@ -198,7 +272,7 @@ func SetupRoutes(appCtx *config.AppContext) *gin.Engine {
 		}
 
 		// ========================================
-		// RUTAS DE ADMINISTRACIÓN
+		// RUTAS DE ADMINISTRACIÓN GENERAL
 		// ========================================
 
 		admin := apiV1.Group("/admin")
@@ -228,6 +302,51 @@ func SetupRoutes(appCtx *config.AppContext) *gin.Engine {
 					"status":  "coming_soon",
 				})
 			})
+
+			// ========================================
+			// ADMINISTRACIÓN DE SEGURIDAD
+			// ========================================
+
+			security := admin.Group("/security")
+			{
+				// Gestión de preguntas de seguridad del sistema
+				security.GET("/questions", func(c *gin.Context) {
+					c.JSON(200, gin.H{
+						"message": "Admin security questions management - futuro",
+						"status":  "coming_soon",
+					})
+				})
+
+				security.POST("/questions", func(c *gin.Context) {
+					c.JSON(200, gin.H{
+						"message": "Create security question - futuro",
+						"status":  "coming_soon",
+					})
+				})
+
+				security.PUT("/questions/:id", func(c *gin.Context) {
+					c.JSON(200, gin.H{
+						"message": "Update security question - futuro",
+						"status":  "coming_soon",
+					})
+				})
+
+				// Reportes de seguridad
+				security.GET("/reports", func(c *gin.Context) {
+					c.JSON(200, gin.H{
+						"message": "Security reports - futuro",
+						"status":  "coming_soon",
+					})
+				})
+
+				// Configuración de políticas de seguridad
+				security.GET("/policies", func(c *gin.Context) {
+					c.JSON(200, gin.H{
+						"message": "Security policies management - futuro",
+						"status":  "coming_soon",
+					})
+				})
+			}
 		}
 
 		// ========================================
@@ -266,7 +385,34 @@ func SetupRoutes(appCtx *config.AppContext) *gin.Engine {
 			"method":    c.Request.Method,
 			"timestamp": time.Now().Format(time.RFC3339),
 			"available_endpoints": gin.H{
-				"auth":          "/api/v1/auth/*",
+				"auth": gin.H{
+					"public": []string{
+						"POST /api/v1/auth/login",
+						"POST /api/v1/auth/register",
+						"POST /api/v1/auth/refresh",
+						"GET  /api/v1/auth/security-questions",
+						"POST /api/v1/auth/forgot-password",
+						"GET  /api/v1/auth/reset-status/:token",
+						"POST /api/v1/auth/verify-security-question",
+						"POST /api/v1/auth/reset-password",
+					},
+					"protected": []string{
+						"POST /api/v1/auth/logout",
+						"GET  /api/v1/auth/profile",
+						"PUT  /api/v1/auth/change-password",
+						"GET  /api/v1/auth/verify",
+						"GET  /api/v1/auth/security-status",
+						"POST /api/v1/auth/security-questions",
+						"PUT  /api/v1/auth/security-questions/:questionId",
+						"DELETE /api/v1/auth/security-questions/:questionId",
+						"GET  /api/v1/auth/reset-history",
+					},
+					"admin": []string{
+						"POST /api/v1/auth/admin/cleanup-tokens",
+						"GET  /api/v1/auth/admin/security-questions/stats",
+						"GET  /api/v1/auth/admin/reset-audit",
+					},
+				},
 				"messages":      "/api/v1/messages/*",
 				"files":         "/api/v1/files/*",
 				"admin":         "/api/v1/admin/*",

@@ -1,6 +1,6 @@
 // src/services/passwordResetService.ts
 // Servicio para todas las operaciones de reset de contraseña
-// Integrado con la arquitectura existente de apiClient
+// Integrado con preguntas de seguridad y arquitectura existente
 
 import { apiClient } from './api';
 import { 
@@ -16,33 +16,108 @@ import {
 } from '../types/passwordReset';
 import { ApiResponse } from '../types/auth';
 
+// ========================================
+// NUEVOS TIPOS PARA PREGUNTAS DE SEGURIDAD
+// ========================================
+
+export interface SecurityQuestion {
+  id: number;
+  questionText: string;
+  category: string;
+}
+
+export interface SecurityQuestionForReset {
+  questionId: number;
+  questionText: string;
+  attempts: number;
+  maxAttempts: number;
+}
+
+export interface PasswordResetInitResponse {
+  success: boolean;
+  message: string;
+  requiresSecurityQuestion: boolean;
+  securityQuestion?: SecurityQuestionForReset;
+}
+
+export interface PasswordResetVerifySecurityRequest {
+  email: string;
+  questionId: number;
+  answer: string;
+}
+
+export interface PasswordResetVerifySecurityResponse {
+  success: boolean;
+  message: string;
+  verified: boolean;
+  canProceedToReset: boolean;
+  attemptsRemaining: number;
+  resetToken?: string; // Solo se devuelve si la verificación es exitosa
+}
+
+export interface PasswordResetStatusByEmailResponse {
+  tokenValid: boolean;
+  tokenExpired: boolean;
+  tokenUsed: boolean;
+  requiresSecurityQuestion: boolean;
+  securityQuestionVerified: boolean;
+  canProceedToReset: boolean;
+  attemptsRemaining: number;
+  securityQuestion?: SecurityQuestionForReset;
+}
+
 /**
  * Clase para manejar todas las operaciones de reset de contraseña
- * Integrada con el sistema de interceptores existente para auth y refresh tokens
+ * Incluye nuevo flujo con preguntas de seguridad
  */
 class PasswordResetService {
 
   // ========================================
-  // ENDPOINTS PÚBLICOS (SIN AUTENTICACIÓN)
+  // ENDPOINTS PÚBLICOS DE PREGUNTAS DE SEGURIDAD
   // ========================================
 
   /**
-   * Solicitar reset de contraseña
-   * POST /api/v1/auth/forgot-password
+   * Obtener catálogo de preguntas de seguridad disponibles
+   * GET /api/v1/auth/security-questions
    */
-  async requestPasswordReset(request: PasswordResetRequest): Promise<PasswordResetRequestResponse> {
+  async getSecurityQuestions(): Promise<SecurityQuestion[]> {
     try {
-      const response = await apiClient.post<PasswordResetRequestResponse>(
-        '/auth/forgot-password',
-        request,
+      const response = await apiClient.get<{ questions: SecurityQuestion[]; count: number }>(
+        '/auth/security-questions',
         {
           timeout: PASSWORD_RESET_CONFIG.REQUEST_TIMEOUT,
-          // No incluir Authorization header para endpoints públicos
           headers: {
             'Content-Type': 'application/json'
           }
         }
       );
+
+      return response.questions;
+    } catch (error: any) {
+      throw this.handlePasswordResetError(error, 'questions');
+    }
+  }
+
+  /**
+   * Solicitar reset de contraseña (NUEVO FLUJO)
+   * POST /api/v1/auth/forgot-password
+   * Ahora retorna información sobre preguntas de seguridad si aplica
+   */
+  async requestPasswordReset(request: PasswordResetRequest): Promise<PasswordResetInitResponse> {
+    try {
+      const response = await apiClient.post<PasswordResetInitResponse>(
+        '/auth/forgot-password',
+        request,
+        {
+          timeout: PASSWORD_RESET_CONFIG.REQUEST_TIMEOUT,
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+
+      // Registrar el timestamp de la solicitud para rate limiting
+      this.recordResetRequest();
 
       return response;
     } catch (error: any) {
@@ -51,8 +126,55 @@ class PasswordResetService {
   }
 
   /**
-   * Confirmar reset de contraseña
+   * Verificar pregunta de seguridad durante reset (NUEVO)
+   * POST /api/v1/auth/verify-security-question
+   * Retorna el token de reset si la verificación es exitosa
+   */
+  async verifySecurityQuestion(request: PasswordResetVerifySecurityRequest): Promise<PasswordResetVerifySecurityResponse> {
+    try {
+      const response = await apiClient.post<PasswordResetVerifySecurityResponse>(
+        '/auth/verify-security-question',
+        request,
+        {
+          timeout: PASSWORD_RESET_CONFIG.REQUEST_TIMEOUT,
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+
+      return response;
+    } catch (error: any) {
+      throw this.handlePasswordResetError(error, 'verify');
+    }
+  }
+
+  /**
+   * Obtener estado del proceso de reset por email (NUEVO)
+   * GET /api/v1/auth/reset-status?email=user@gamc.gov.bo
+   */
+  async getPasswordResetStatusByEmail(email: string): Promise<PasswordResetStatusByEmailResponse> {
+    try {
+      const response = await apiClient.get<PasswordResetStatusByEmailResponse>(
+        `/auth/reset-status?email=${encodeURIComponent(email)}`,
+        {
+          timeout: PASSWORD_RESET_CONFIG.REQUEST_TIMEOUT,
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+
+      return response;
+    } catch (error: any) {
+      throw this.handlePasswordResetError(error, 'status');
+    }
+  }
+
+  /**
+   * Confirmar reset de contraseña (ACTUALIZADO)
    * POST /api/v1/auth/reset-password
+   * Ahora requiere token obtenido tras verificar pregunta de seguridad
    */
   async confirmPasswordReset(request: PasswordResetConfirm): Promise<PasswordResetConfirmResponse> {
     try {
@@ -61,12 +183,14 @@ class PasswordResetService {
         request,
         {
           timeout: PASSWORD_RESET_CONFIG.REQUEST_TIMEOUT,
-          // No incluir Authorization header para endpoints públicos
           headers: {
             'Content-Type': 'application/json'
           }
         }
       );
+
+      // Limpiar rate limiting tras reset exitoso
+      this.clearRateLimitRecord();
 
       return response;
     } catch (error: any) {
@@ -79,22 +203,22 @@ class PasswordResetService {
   // ========================================
 
   /**
-   * Obtener estado de tokens de reset del usuario actual
-   * GET /api/v1/auth/reset-status
-   * Requiere autenticación - el apiClient automáticamente incluye el Bearer token
+   * Obtener historial de resets del usuario actual (NUEVO)
+   * GET /api/v1/auth/reset-history
+   * Requiere autenticación
    */
-  async getPasswordResetStatus(): Promise<PasswordResetStatusResponse> {
+  async getPasswordResetHistory(): Promise<PasswordResetToken[]> {
     try {
-      const response = await apiClient.get<PasswordResetStatusResponse>(
-        '/auth/reset-status',
+      const response = await apiClient.get<{ tokens: PasswordResetToken[]; count: number }>(
+        '/auth/reset-history',
         {
           timeout: PASSWORD_RESET_CONFIG.REQUEST_TIMEOUT
         }
       );
 
-      return response;
+      return response.tokens;
     } catch (error: any) {
-      throw this.handlePasswordResetError(error, 'status');
+      throw this.handlePasswordResetError(error, 'history');
     }
   }
 
@@ -105,7 +229,6 @@ class PasswordResetService {
   /**
    * Limpiar tokens expirados (solo administradores)
    * POST /api/v1/auth/admin/cleanup-tokens
-   * Requiere autenticación Y rol admin
    */
   async cleanupExpiredTokens(): Promise<PasswordResetCleanupResponse> {
     try {
@@ -129,7 +252,6 @@ class PasswordResetService {
 
   /**
    * Validar email antes de enviar solicitud
-   * Verifica formato y dominio institucional
    */
   validateEmailForReset(email: string): { isValid: boolean; error?: string } {
     if (!email?.trim()) {
@@ -140,6 +262,49 @@ class PasswordResetService {
       return { 
         isValid: false, 
         error: 'Solo emails @gamc.gov.bo pueden solicitar reset de contraseña' 
+      };
+    }
+
+    return { isValid: true };
+  }
+
+  /**
+   * Validar respuesta de seguridad (NUEVO)
+   */
+  validateSecurityAnswer(answer: string): { isValid: boolean; error?: string } {
+    if (!answer?.trim()) {
+      return { isValid: false, error: 'La respuesta es requerida' };
+    }
+
+    const trimmedAnswer = answer.trim();
+
+    if (trimmedAnswer.length < 2) {
+      return { 
+        isValid: false, 
+        error: 'La respuesta debe tener al menos 2 caracteres' 
+      };
+    }
+
+    if (trimmedAnswer.length > 100) {
+      return { 
+        isValid: false, 
+        error: 'La respuesta no puede exceder 100 caracteres' 
+      };
+    }
+
+    // Verificar que no sea solo caracteres repetidos
+    if (/^(.)\1+$/.test(trimmedAnswer)) {
+      return { 
+        isValid: false, 
+        error: 'La respuesta no puede ser solo caracteres repetidos' 
+      };
+    }
+
+    // Verificar que no sea solo números
+    if (/^\d+$/.test(trimmedAnswer)) {
+      return { 
+        isValid: false, 
+        error: 'La respuesta no puede ser solo números' 
       };
     }
 
@@ -199,14 +364,101 @@ class PasswordResetService {
   }
 
   // ========================================
+  // FLUJO COMPLETO DE RESET CON PREGUNTAS
+  // ========================================
+
+  /**
+   * Ejecutar flujo completo de reset de contraseña
+   * Maneja automáticamente preguntas de seguridad si son requeridas
+   */
+  async executeFullPasswordReset(
+    email: string, 
+    newPassword: string,
+    onSecurityQuestionRequired?: (question: SecurityQuestionForReset) => Promise<string>
+  ): Promise<PasswordResetConfirmResponse> {
+    
+    // Paso 1: Validar datos iniciales
+    const emailValidation = this.validateEmailForReset(email);
+    if (!emailValidation.isValid) {
+      throw new PasswordResetError(
+        PasswordResetErrorType.VALIDATION_ERROR,
+        emailValidation.error!
+      );
+    }
+
+    const passwordValidation = this.validatePasswordForReset(newPassword);
+    if (!passwordValidation.isValid) {
+      throw new PasswordResetError(
+        PasswordResetErrorType.PASSWORD_WEAK,
+        passwordValidation.error!
+      );
+    }
+
+    // Paso 2: Solicitar reset
+    const resetRequest = await this.requestPasswordReset({ email });
+    
+    let resetToken: string;
+
+    // Paso 3: Manejar pregunta de seguridad si es requerida
+    if (resetRequest.requiresSecurityQuestion && resetRequest.securityQuestion) {
+      if (!onSecurityQuestionRequired) {
+        throw new PasswordResetError(
+          PasswordResetErrorType.VALIDATION_ERROR,
+          'Se requiere verificación de pregunta de seguridad pero no se proporcionó manejador'
+        );
+      }
+
+      // Obtener respuesta del usuario
+      const userAnswer = await onSecurityQuestionRequired(resetRequest.securityQuestion);
+      
+      // Validar respuesta
+      const answerValidation = this.validateSecurityAnswer(userAnswer);
+      if (!answerValidation.isValid) {
+        throw new PasswordResetError(
+          PasswordResetErrorType.VALIDATION_ERROR,
+          answerValidation.error!
+        );
+      }
+
+      // Verificar pregunta de seguridad
+      const verifyResponse = await this.verifySecurityQuestion({
+        email,
+        questionId: resetRequest.securityQuestion.questionId,
+        answer: userAnswer
+      });
+
+      if (!verifyResponse.verified || !verifyResponse.resetToken) {
+        throw new PasswordResetError(
+          PasswordResetErrorType.VALIDATION_ERROR,
+          verifyResponse.message
+        );
+      }
+
+      resetToken = verifyResponse.resetToken;
+    } else {
+      // Para usuarios sin preguntas de seguridad, el token debería venir por email
+      // En este caso, necesitamos que el usuario proporcione el token manualmente
+      throw new PasswordResetError(
+        PasswordResetErrorType.VALIDATION_ERROR,
+        'Token de reset enviado por email. Revise su correo institucional'
+      );
+    }
+
+    // Paso 4: Confirmar reset con token obtenido
+    return await this.confirmPasswordReset({
+      token: resetToken,
+      newPassword
+    });
+  }
+
+  // ========================================
   // MANEJO DE ERRORES ESPECÍFICOS
   // ========================================
 
   /**
    * Maneja errores específicos de reset de contraseña
-   * Convierte errores HTTP en tipos de error específicos del dominio
    */
-  private handlePasswordResetError(error: any, operation: 'request' | 'confirm' | 'status' | 'cleanup'): Error {
+  private handlePasswordResetError(error: any, operation: string): Error {
     // Error de red/timeout
     if (!error.response) {
       return new PasswordResetError(
@@ -224,20 +476,130 @@ class PasswordResetService {
       case 'request':
         return this.handleRequestErrors(status, errorMessage, data);
       
+      case 'verify':
+        return this.handleVerifyErrors(status, errorMessage, data);
+      
       case 'confirm':
         return this.handleConfirmErrors(status, errorMessage, data);
       
       case 'status':
         return this.handleStatusErrors(status, errorMessage, data);
       
+      case 'history':
+        return this.handleHistoryErrors(status, errorMessage, data);
+      
       case 'cleanup':
         return this.handleCleanupErrors(status, errorMessage, data);
+      
+      case 'questions':
+        return this.handleQuestionsErrors(status, errorMessage, data);
       
       default:
         return new PasswordResetError(
           PasswordResetErrorType.UNKNOWN_ERROR,
           errorMessage,
           error
+        );
+    }
+  }
+
+  /**
+   * Maneja errores específicos de verificación de pregunta de seguridad (NUEVO)
+   */
+  private handleVerifyErrors(status: number, message: string, data: any): Error {
+    switch (status) {
+      case 400:
+        if (message.includes('incorrecta') || message.includes('incorrect')) {
+          return new PasswordResetError(
+            PasswordResetErrorType.VALIDATION_ERROR,
+            'Respuesta de seguridad incorrecta',
+            { status, message, data }
+          );
+        }
+        
+        if (message.includes('no encontrado') || message.includes('not found')) {
+          return new PasswordResetError(
+            PasswordResetErrorType.VALIDATION_ERROR,
+            'No hay solicitud de reset activa para este usuario',
+            { status, message, data }
+          );
+        }
+        
+        if (message.includes('expirado') || message.includes('expired')) {
+          return new PasswordResetError(
+            PasswordResetErrorType.TOKEN_EXPIRED,
+            'La solicitud de reset ha expirado. Solicite un nuevo reset',
+            { status, message, data }
+          );
+        }
+        
+        return new PasswordResetError(
+          PasswordResetErrorType.VALIDATION_ERROR,
+          `Error de verificación: ${message}`,
+          { status, message, data }
+        );
+      
+      case 429:
+        return new PasswordResetError(
+          PasswordResetErrorType.RATE_LIMIT_EXCEEDED,
+          'Demasiados intentos fallidos. Solicite un nuevo reset',
+          { status, message, data }
+        );
+      
+      default:
+        return new PasswordResetError(
+          PasswordResetErrorType.UNKNOWN_ERROR,
+          `Error ${status}: ${message}`,
+          { status, message, data }
+        );
+    }
+  }
+
+  /**
+   * Maneja errores de obtener preguntas de seguridad (NUEVO)
+   */
+  private handleQuestionsErrors(status: number, message: string, data: any): Error {
+    switch (status) {
+      case 500:
+        return new PasswordResetError(
+          PasswordResetErrorType.SERVER_ERROR,
+          'Error del servidor al cargar preguntas de seguridad',
+          { status, message, data }
+        );
+      
+      default:
+        return new PasswordResetError(
+          PasswordResetErrorType.NETWORK_ERROR,
+          `Error al cargar preguntas: ${message}`,
+          { status, message, data }
+        );
+    }
+  }
+
+  /**
+   * Maneja errores de historial (NUEVO)
+   */
+  private handleHistoryErrors(status: number, message: string, data: any): Error {
+    switch (status) {
+      case 401:
+        return new PasswordResetError(
+          PasswordResetErrorType.NETWORK_ERROR,
+          'Sesión expirada. Inicie sesión nuevamente',
+          { status, message, data }
+        );
+      
+      case 403:
+        return new PasswordResetError(
+          PasswordResetErrorType.VALIDATION_ERROR,
+          'No tiene permisos para acceder al historial',
+          { status, message, data }
+        );
+      
+      default:
+        return new PasswordResetError(
+          PasswordResetErrorType.SERVER_ERROR,
+          `Error al obtener historial: ${message}`,
+          { status, message, data }
         );
     }
   }
@@ -290,7 +652,6 @@ class PasswordResetService {
   private handleConfirmErrors(status: number, message: string, data: any): Error {
     switch (status) {
       case 400:
-        // Analizar mensaje específico para determinar tipo de error
         if (message.includes('inválido') || message.includes('invalid')) {
           return new PasswordResetError(
             PasswordResetErrorType.TOKEN_INVALID,
@@ -323,6 +684,14 @@ class PasswordResetService {
           );
         }
         
+        if (message.includes('verificar') || message.includes('pregunta')) {
+          return new PasswordResetError(
+            PasswordResetErrorType.VALIDATION_ERROR,
+            'Debe verificar la pregunta de seguridad primero',
+            { status, message, data }
+          );
+        }
+        
         return new PasswordResetError(
           PasswordResetErrorType.VALIDATION_ERROR,
           `Error de validación: ${message}`,
@@ -350,24 +719,24 @@ class PasswordResetService {
    */
   private handleStatusErrors(status: number, message: string, data: any): Error {
     switch (status) {
-      case 401:
+      case 400:
         return new PasswordResetError(
-          PasswordResetErrorType.NETWORK_ERROR,
-          'Sesión expirada. Inicie sesión nuevamente',
+          PasswordResetErrorType.VALIDATION_ERROR,
+          'Email requerido para consultar estado',
           { status, message, data }
         );
       
-      case 403:
+      case 500:
         return new PasswordResetError(
-          PasswordResetErrorType.VALIDATION_ERROR,
-          'No tiene permisos para acceder a esta información',
+          PasswordResetErrorType.SERVER_ERROR,
+          `Error al obtener estado: ${message}`,
           { status, message, data }
         );
       
       default:
         return new PasswordResetError(
-          PasswordResetErrorType.SERVER_ERROR,
-          `Error al obtener estado: ${message}`,
+          PasswordResetErrorType.UNKNOWN_ERROR,
+          `Error ${status}: ${message}`,
           { status, message, data }
         );
     }
@@ -441,6 +810,47 @@ class PasswordResetService {
   clearRateLimitRecord(): void {
     localStorage.removeItem('lastPasswordResetRequest');
   }
+
+  /**
+   * Guarda estado del proceso de reset en progreso (NUEVO)
+   */
+  saveResetProgress(email: string, step: 'requested' | 'security_verified', data?: any): void {
+    const progressData = {
+      email,
+      step,
+      timestamp: Date.now(),
+      data
+    };
+    localStorage.setItem('passwordResetProgress', JSON.stringify(progressData));
+  }
+
+  /**
+   * Obtiene estado del proceso de reset en progreso (NUEVO)
+   */
+  getResetProgress(): { email: string; step: string; timestamp: number; data?: any } | null {
+    const progressData = localStorage.getItem('passwordResetProgress');
+    if (!progressData) return null;
+
+    try {
+      const parsed = JSON.parse(progressData);
+      // Verificar que no haya expirado (30 minutos)
+      if (Date.now() - parsed.timestamp > 30 * 60 * 1000) {
+        this.clearResetProgress();
+        return null;
+      }
+      return parsed;
+    } catch {
+      this.clearResetProgress();
+      return null;
+    }
+  }
+
+  /**
+   * Limpia estado del proceso de reset (NUEVO)
+   */
+  clearResetProgress(): void {
+    localStorage.removeItem('passwordResetProgress');
+  }
 }
 
 // ========================================
@@ -449,7 +859,6 @@ class PasswordResetService {
 
 /**
  * Error personalizado para operaciones de reset de contraseña
- * Incluye tipo específico y contexto adicional
  */
 export class PasswordResetError extends Error {
   public type: PasswordResetErrorType;

@@ -50,6 +50,20 @@ CREATE TABLE message_statuses (
 );
 
 -- ========================================
+-- NUEVAS TABLAS PARA PREGUNTAS DE SEGURIDAD
+-- ========================================
+
+-- Catálogo de preguntas de seguridad predefinidas
+CREATE TABLE security_questions (
+    id SERIAL PRIMARY KEY,
+    question_text TEXT NOT NULL,
+    category VARCHAR(50) DEFAULT 'general',
+    is_active BOOLEAN DEFAULT true,
+    sort_order INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ========================================
 -- TABLAS CON DEPENDENCIAS DE PRIMER NIVEL
 -- ========================================
 
@@ -70,6 +84,20 @@ CREATE TABLE users (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Respuestas de seguridad de los usuarios (relación con preguntas)
+CREATE TABLE user_security_questions (
+    id SERIAL PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    security_question_id INTEGER NOT NULL REFERENCES security_questions(id),
+    answer_hash VARCHAR(255) NOT NULL, -- Hash de la respuesta (no texto plano)
+    is_active BOOLEAN DEFAULT true,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    
+    -- Un usuario puede tener máximo 3 preguntas activas
+    CONSTRAINT unique_user_question UNIQUE (user_id, security_question_id)
+);
+
 -- Tabla de Sesiones (para JWT refresh tokens)
 CREATE TABLE user_sessions (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -83,7 +111,7 @@ CREATE TABLE user_sessions (
 );
 
 -- ========================================
--- TABLA PARA RESET DE CONTRASEÑAS
+-- TABLA PARA RESET DE CONTRASEÑAS (MODIFICADA)
 -- ========================================
 
 -- Tabla de tokens de reset de contraseña
@@ -98,6 +126,11 @@ CREATE TABLE password_reset_tokens (
     user_agent TEXT,
     is_active BOOLEAN DEFAULT true,
     
+    -- NUEVOS CAMPOS PARA PREGUNTAS DE SEGURIDAD
+    requires_security_question BOOLEAN DEFAULT false,
+    security_question_verified BOOLEAN DEFAULT false,
+    security_question_attempts INTEGER DEFAULT 0,
+    
     -- Metadatos adicionales para auditoría
     email_sent_at TIMESTAMP WITH TIME ZONE,
     email_opened_at TIMESTAMP WITH TIME ZONE,
@@ -106,7 +139,8 @@ CREATE TABLE password_reset_tokens (
     -- Constraints
     CONSTRAINT chk_expires_future CHECK (expires_at > created_at),
     CONSTRAINT chk_used_after_created CHECK (used_at IS NULL OR used_at >= created_at),
-    CONSTRAINT chk_attempts_positive CHECK (attempts_count >= 0)
+    CONSTRAINT chk_attempts_positive CHECK (attempts_count >= 0),
+    CONSTRAINT chk_security_attempts_positive CHECK (security_question_attempts >= 0)
 );
 
 -- ========================================
@@ -230,11 +264,17 @@ CREATE INDEX idx_users_org_unit ON users(organizational_unit_id);
 CREATE INDEX idx_users_role ON users(role);
 CREATE INDEX idx_users_active ON users(is_active);
 
+-- Índices para preguntas de seguridad
+CREATE INDEX idx_security_questions_active ON security_questions(is_active);
+CREATE INDEX idx_user_security_questions_user ON user_security_questions(user_id);
+CREATE INDEX idx_user_security_questions_active ON user_security_questions(user_id, is_active);
+
 -- Índices para password reset tokens
 CREATE UNIQUE INDEX idx_password_reset_tokens_token ON password_reset_tokens (token) WHERE is_active = true;
 CREATE INDEX idx_password_reset_tokens_user_id ON password_reset_tokens (user_id, is_active);
 CREATE INDEX idx_password_reset_tokens_expires ON password_reset_tokens (expires_at) WHERE is_active = true;
 CREATE INDEX idx_password_reset_tokens_ip_created ON password_reset_tokens (request_ip, created_at);
+CREATE INDEX idx_password_reset_tokens_security ON password_reset_tokens (user_id, requires_security_question);
 
 -- Índices para mensajes
 CREATE INDEX idx_messages_sender ON messages(sender_id);
@@ -271,6 +311,29 @@ CREATE OR REPLACE FUNCTION generate_reset_token()
 RETURNS VARCHAR(255) AS $$
 BEGIN
     RETURN encode(gen_random_bytes(32), 'hex');
+END;
+$$ LANGUAGE plpgsql;
+
+-- Función para hashear respuesta de seguridad
+CREATE OR REPLACE FUNCTION hash_security_answer(answer TEXT)
+RETURNS VARCHAR(255) AS $$
+BEGIN
+    -- Normalizar: minúsculas, sin espacios extra, sin acentos básicos
+    RETURN encode(digest(
+        lower(trim(regexp_replace(answer, '\s+', ' ', 'g'))), 
+        'sha256'
+    ), 'hex');
+END;
+$$ LANGUAGE plpgsql;
+
+-- Función para verificar si usuario tiene preguntas de seguridad
+CREATE OR REPLACE FUNCTION user_has_security_questions(user_uuid UUID)
+RETURNS BOOLEAN AS $$
+BEGIN
+    RETURN EXISTS (
+        SELECT 1 FROM user_security_questions 
+        WHERE user_id = user_uuid AND is_active = true
+    );
 END;
 $$ LANGUAGE plpgsql;
 
@@ -323,6 +386,7 @@ RETURNS TRIGGER AS $$
 DECLARE
     user_email VARCHAR(100);
     user_active BOOLEAN;
+    has_security_questions BOOLEAN;
 BEGIN
     -- Obtener datos del usuario
     SELECT email, is_active INTO user_email, user_active
@@ -358,6 +422,10 @@ BEGIN
             USING ERRCODE = 'check_violation';
     END IF;
     
+    -- Verificar si el usuario tiene preguntas de seguridad configuradas
+    has_security_questions := user_has_security_questions(NEW.user_id);
+    NEW.requires_security_question := has_security_questions;
+    
     -- Invalidar tokens anteriores del mismo usuario
     UPDATE password_reset_tokens 
     SET is_active = false 
@@ -377,6 +445,26 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- Trigger para hashear automáticamente respuestas de seguridad
+CREATE OR REPLACE FUNCTION hash_security_answer_trigger()
+RETURNS TRIGGER AS $$
+BEGIN
+    -- Hashear la respuesta si no está ya hasheada
+    IF LENGTH(NEW.answer_hash) != 64 THEN
+        NEW.answer_hash := hash_security_answer(NEW.answer_hash);
+    END IF;
+    
+    -- Validar que no exceda 3 preguntas activas por usuario
+    IF (SELECT COUNT(*) FROM user_security_questions 
+        WHERE user_id = NEW.user_id AND is_active = true) >= 3 THEN
+        RAISE EXCEPTION 'Un usuario no puede tener más de 3 preguntas de seguridad activas'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
 -- Triggers para updated_at
 CREATE TRIGGER update_organizational_units_updated_at BEFORE UPDATE ON organizational_units
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
@@ -387,11 +475,20 @@ CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON users
 CREATE TRIGGER update_messages_updated_at BEFORE UPDATE ON messages
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+CREATE TRIGGER update_user_security_questions_updated_at BEFORE UPDATE ON user_security_questions
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
 -- Trigger para validar password reset
 CREATE TRIGGER trigger_validate_reset_request
     BEFORE INSERT ON password_reset_tokens
     FOR EACH ROW
     EXECUTE FUNCTION validate_reset_request();
+
+-- Trigger para hashear respuestas de seguridad
+CREATE TRIGGER trigger_hash_security_answer
+    BEFORE INSERT OR UPDATE ON user_security_questions
+    FOR EACH ROW
+    EXECUTE FUNCTION hash_security_answer_trigger();
 
 -- ========================================
 -- FUNCIÓN PARA POPULAR DIMENSIONES DE TIEMPO
@@ -455,6 +552,34 @@ SELECT populate_dim_date('2020-01-01'::DATE, '2030-12-31'::DATE);
 SELECT populate_dim_time();
 
 -- ========================================
+-- DATOS INICIALES PARA PREGUNTAS DE SEGURIDAD
+-- ========================================
+
+INSERT INTO security_questions (question_text, category, sort_order) VALUES
+-- Preguntas personales
+('¿Cuál es el nombre de su primera mascota?', 'personal', 1),
+('¿En qué ciudad nació?', 'personal', 2),
+('¿Cuál es el segundo nombre de su madre?', 'personal', 3),
+('¿Cuál es el apellido de soltera de su madre?', 'personal', 4),
+('¿Cómo se llama su mejor amigo de la infancia?', 'personal', 5),
+
+-- Preguntas educativas
+('¿Cuál fue el nombre de su escuela primaria?', 'education', 6),
+('¿Cómo se llamaba su profesor favorito?', 'education', 7),
+('¿Cuál fue su materia favorita en el colegio?', 'education', 8),
+
+-- Preguntas profesionales/laborales
+('¿Cuál fue su primer trabajo?', 'professional', 9),
+('¿En qué unidad del GAMC trabajó primero?', 'professional', 10),
+('¿Cómo se llama su supervisor directo actual?', 'professional', 11),
+
+-- Preguntas de preferencias
+('¿Cuál es su comida boliviana favorita?', 'preferences', 12),
+('¿Cuál es su equipo de fútbol favorito?', 'preferences', 13),
+('¿Cuál es su color favorito?', 'preferences', 14),
+('¿Cuál es su número favorito?', 'preferences', 15);
+
+-- ========================================
 -- VISTAS ÚTILES
 -- ========================================
 
@@ -511,6 +636,9 @@ SELECT
     prt.used_at,
     prt.request_ip,
     prt.attempts_count,
+    prt.requires_security_question,
+    prt.security_question_verified,
+    prt.security_question_attempts,
     CASE 
         WHEN prt.used_at IS NOT NULL THEN 'USED'
         WHEN prt.expires_at < NOW() THEN 'EXPIRED'
@@ -523,9 +651,30 @@ JOIN users u ON prt.user_id = u.id
 JOIN organizational_units ou ON u.organizational_unit_id = ou.id
 ORDER BY prt.created_at DESC;
 
+-- Vista de usuarios con preguntas de seguridad
+CREATE VIEW v_users_security_status AS
+SELECT 
+    u.id,
+    u.email,
+    u.first_name,
+    u.last_name,
+    ou.name as organizational_unit,
+    (SELECT COUNT(*) FROM user_security_questions WHERE user_id = u.id AND is_active = true) as security_questions_count,
+    (SELECT COUNT(*) > 0 FROM user_security_questions WHERE user_id = u.id AND is_active = true) as has_security_questions,
+    u.created_at,
+    u.last_login
+FROM users u
+JOIN organizational_units ou ON u.organizational_unit_id = ou.id
+WHERE u.is_active = true
+ORDER BY u.created_at DESC;
+
 -- ========================================
 -- COMENTARIOS PARA DOCUMENTACIÓN
 -- ========================================
+
+COMMENT ON TABLE security_questions IS 'Catálogo de preguntas de seguridad predefinidas para usuarios';
+COMMENT ON TABLE user_security_questions IS 'Respuestas de seguridad de usuarios (máximo 3 por usuario)';
+COMMENT ON COLUMN user_security_questions.answer_hash IS 'Hash SHA256 de la respuesta normalizada (minúsculas, sin espacios extra)';
 
 COMMENT ON TABLE password_reset_tokens IS 'Tokens de reset de contraseña para usuarios institucionales (@gamc.gov.bo)';
 COMMENT ON COLUMN password_reset_tokens.token IS 'Token único de 64 caracteres hex para reset';
@@ -533,6 +682,9 @@ COMMENT ON COLUMN password_reset_tokens.expires_at IS 'Expiración del token (30
 COMMENT ON COLUMN password_reset_tokens.used_at IS 'Timestamp cuando se usó el token (previene reutilización)';
 COMMENT ON COLUMN password_reset_tokens.request_ip IS 'IP desde donde se solicitó el reset';
 COMMENT ON COLUMN password_reset_tokens.attempts_count IS 'Número de intentos de uso del token';
+COMMENT ON COLUMN password_reset_tokens.requires_security_question IS 'Si el usuario tiene preguntas de seguridad configuradas';
+COMMENT ON COLUMN password_reset_tokens.security_question_verified IS 'Si la pregunta de seguridad fue verificada correctamente';
+COMMENT ON COLUMN password_reset_tokens.security_question_attempts IS 'Intentos de respuesta a pregunta de seguridad';
 COMMENT ON COLUMN password_reset_tokens.email_sent_at IS 'Cuándo se envió el email de reset';
 COMMENT ON COLUMN password_reset_tokens.email_opened_at IS 'Cuándo el usuario abrió el email (tracking)';
 

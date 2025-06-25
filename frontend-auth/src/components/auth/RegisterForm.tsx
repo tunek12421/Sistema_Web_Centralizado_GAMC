@@ -6,6 +6,17 @@ interface FieldValidation {
   type: 'success' | 'error' | 'warning' | '';
 }
 
+interface SecurityQuestion {
+  id: number;
+  questionText: string;
+  category: string;
+}
+
+interface UserSecurityQuestion {
+  questionId: number;
+  answer: string;
+}
+
 interface RegisterFormProps {
   onRegistrationSuccess: () => void;
   onBack: () => void;
@@ -19,11 +30,19 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onRegistrationSuccess, onBa
     lastName: '',
     organizationalUnitId: 1
   });
+
+  // Estados para preguntas de seguridad
+  const [securityQuestions, setSecurityQuestions] = useState<SecurityQuestion[]>([]);
+  const [userSecurityQuestions, setUserSecurityQuestions] = useState<UserSecurityQuestion[]>([]);
+  const [showSecurityQuestions, setShowSecurityQuestions] = useState(false);
+  const [loadingQuestions, setLoadingQuestions] = useState(false);
+
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   
   // Estados para validaciones en tiempo real
   const [registerValidation, setRegisterValidation] = useState<{[key: string]: FieldValidation}>({});
+  const [securityValidation, setSecurityValidation] = useState<{[key: string]: FieldValidation}>({});
   const [isFormValid, setIsFormValid] = useState(false);
 
   // Unidades organizacionales
@@ -36,6 +55,27 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onRegistrationSuccess, onBa
     { id: 6, name: 'Prensa e Imagen' },
     { id: 7, name: 'Tecnología' }
   ];
+
+  // Cargar preguntas de seguridad disponibles
+  const loadSecurityQuestions = async () => {
+    if (securityQuestions.length > 0) return; // Ya están cargadas
+
+    setLoadingQuestions(true);
+    try {
+      const response = await fetch('http://localhost:3000/api/v1/auth/security-questions');
+      const result = await response.json();
+      
+      if (response.ok && result.success) {
+        setSecurityQuestions(result.data.questions);
+      } else {
+        console.error('Error al cargar preguntas de seguridad:', result.message);
+      }
+    } catch (error) {
+      console.error('Error de conexión al cargar preguntas:', error);
+    } finally {
+      setLoadingQuestions(false);
+    }
+  };
 
   // Función para validar email
   const validateEmail = (email: string): FieldValidation => {
@@ -56,7 +96,7 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onRegistrationSuccess, onBa
     return { isValid: true, message: '✓ Email válido (se recomienda usar @gamc.gov.bo)', type: 'warning' };
   };
 
-  // Función para validar contraseña - CORREGIDA para sincronizar con backend
+  // Función para validar contraseña
   const validatePassword = (password: string): FieldValidation => {
     if (!password) {
       return { isValid: false, message: 'La contraseña es requerida', type: 'error' };
@@ -69,7 +109,6 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onRegistrationSuccess, onBa
     const hasUppercase = /[A-Z]/.test(password);
     const hasLowercase = /[a-z]/.test(password);
     const hasNumbers = /\d/.test(password);
-    // CORRECCIÓN: Usar exactamente los mismos caracteres especiales que el backend
     const hasSymbols = /[@$!%*?&]/.test(password);
     
     const missing = [];
@@ -89,46 +128,38 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onRegistrationSuccess, onBa
     return { isValid: true, message: '✓ Contraseña segura', type: 'success' };
   };
 
-  // Función mejorada para validar nombres - CORREGIDA
+  // Función para validar nombres
   const validateName = (name: string, fieldName: string): FieldValidation => {
-    // Verificar si el campo está vacío
     if (!name) {
       return { isValid: false, message: `${fieldName} es requerido`, type: 'error' };
     }
     
-    // NUEVA VALIDACIÓN: Verificar si contiene solo espacios en blanco
     if (name.trim() === '') {
       return { isValid: false, message: `${fieldName} no puede contener solo espacios en blanco`, type: 'error' };
     }
     
-    // Verificar longitud mínima (después de quitar espacios al inicio y final)
     const trimmedName = name.trim();
     if (trimmedName.length < 2) {
       return { isValid: false, message: `${fieldName} debe tener al menos 2 caracteres`, type: 'error' };
     }
     
-    // Verificar longitud máxima
     if (trimmedName.length > 50) {
       return { isValid: false, message: `${fieldName} no puede exceder 50 caracteres`, type: 'error' };
     }
     
-    // NUEVA VALIDACIÓN: Verificar que no tenga espacios excesivos (más de un espacio consecutivo)
     if (/\s{2,}/.test(name)) {
       return { isValid: false, message: `${fieldName} no puede tener espacios múltiples consecutivos`, type: 'error' };
     }
     
-    // NUEVA VALIDACIÓN: Verificar que no empiece o termine con espacios
     if (name !== trimmedName) {
       return { isValid: false, message: `${fieldName} no puede empezar o terminar con espacios`, type: 'error' };
     }
     
-    // Validar caracteres permitidos (solo letras, acentos y espacios simples)
     const nameRegex = /^[a-zA-ZáéíóúÁÉÍÓÚñÑ\s]+$/;
     if (!nameRegex.test(trimmedName)) {
       return { isValid: false, message: 'Solo se permiten letras y espacios', type: 'error' };
     }
     
-    // NUEVA VALIDACIÓN: Verificar que no sea solo un carácter repetido
     if (/^(.)\1+$/.test(trimmedName.replace(/\s/g, ''))) {
       return { isValid: false, message: `${fieldName} no puede ser solo caracteres repetidos`, type: 'error' };
     }
@@ -136,15 +167,76 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onRegistrationSuccess, onBa
     return { isValid: true, message: `✓ ${fieldName} válido`, type: 'success' };
   };
 
-  // Función mejorada para manejar cambios en campos de nombre
+  // Función para validar respuesta de seguridad
+  const validateSecurityAnswer = (answer: string): FieldValidation => {
+    if (!answer) {
+      return { isValid: false, message: 'La respuesta es requerida', type: 'error' };
+    }
+
+    const trimmedAnswer = answer.trim();
+    if (trimmedAnswer.length < 2) {
+      return { isValid: false, message: 'La respuesta debe tener al menos 2 caracteres', type: 'error' };
+    }
+
+    if (trimmedAnswer.length > 100) {
+      return { isValid: false, message: 'La respuesta no puede exceder 100 caracteres', type: 'error' };
+    }
+
+    if (trimmedAnswer === '') {
+      return { isValid: false, message: 'La respuesta no puede estar vacía', type: 'error' };
+    }
+
+    // Verificar que no sea solo caracteres repetidos
+    if (/^(.)\1+$/.test(trimmedAnswer)) {
+      return { isValid: false, message: 'La respuesta no puede ser solo caracteres repetidos', type: 'error' };
+    }
+
+    // Verificar que no sea solo números
+    if (/^\d+$/.test(trimmedAnswer)) {
+      return { isValid: false, message: 'La respuesta no puede ser solo números', type: 'error' };
+    }
+
+    return { isValid: true, message: '✓ Respuesta válida', type: 'success' };
+  };
+
+  // Función para manejar cambios en campos de nombre
   const handleNameChange = (value: string, field: 'firstName' | 'lastName') => {
-    // Opcional: limpiar automáticamente espacios múltiples mientras el usuario escribe
-    const cleanedValue = value.replace(/\s{2,}/g, ' '); // Reemplazar múltiples espacios por uno solo
-    
+    const cleanedValue = value.replace(/\s{2,}/g, ' ');
     setRegisterData({ 
       ...registerData, 
       [field]: cleanedValue 
     });
+  };
+
+  // Función para agregar pregunta de seguridad
+  const addSecurityQuestion = () => {
+    if (userSecurityQuestions.length < 3) {
+      setUserSecurityQuestions([
+        ...userSecurityQuestions,
+        { questionId: 0, answer: '' }
+      ]);
+    }
+  };
+
+  // Función para remover pregunta de seguridad
+  const removeSecurityQuestion = (index: number) => {
+    setUserSecurityQuestions(userSecurityQuestions.filter((_, i) => i !== index));
+  };
+
+  // Función para actualizar pregunta de seguridad
+  const updateSecurityQuestion = (index: number, field: 'questionId' | 'answer', value: string | number) => {
+    const updated = [...userSecurityQuestions];
+    updated[index] = { ...updated[index], [field]: value };
+    setUserSecurityQuestions(updated);
+  };
+
+  // Obtener preguntas disponibles (no seleccionadas)
+  const getAvailableQuestions = (currentIndex: number) => {
+    const selectedIds = userSecurityQuestions
+      .map((q, i) => i !== currentIndex ? q.questionId : 0)
+      .filter(id => id > 0);
+    
+    return securityQuestions.filter(q => !selectedIds.includes(q.id));
   };
 
   // Validaciones en tiempo real para registro
@@ -158,10 +250,43 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onRegistrationSuccess, onBa
     
     setRegisterValidation(validations);
     
-    // Verificar si todo el formulario es válido
-    const allValid = Object.values(validations).every(v => v.isValid);
-    setIsFormValid(allValid);
-  }, [registerData]);
+    // Verificar si todo el formulario básico es válido
+    const basicFormValid = Object.values(validations).every(v => v.isValid);
+    
+    // Validar preguntas de seguridad si están habilitadas
+    let securityValid = true;
+    const securityValidations: {[key: string]: FieldValidation} = {};
+    
+    if (showSecurityQuestions && userSecurityQuestions.length > 0) {
+      userSecurityQuestions.forEach((q, index) => {
+        // Validar que se haya seleccionado una pregunta
+        if (q.questionId === 0) {
+          securityValidations[`question_${index}`] = {
+            isValid: false,
+            message: 'Seleccione una pregunta',
+            type: 'error'
+          };
+          securityValid = false;
+        } else {
+          securityValidations[`question_${index}`] = {
+            isValid: true,
+            message: '✓ Pregunta seleccionada',
+            type: 'success'
+          };
+        }
+
+        // Validar respuesta
+        const answerValidation = validateSecurityAnswer(q.answer);
+        securityValidations[`answer_${index}`] = answerValidation;
+        if (!answerValidation.isValid) {
+          securityValid = false;
+        }
+      });
+    }
+    
+    setSecurityValidation(securityValidations);
+    setIsFormValid(basicFormValid && securityValid);
+  }, [registerData, userSecurityQuestions, showSecurityQuestions]);
 
   // Función mejorada de registro
   const handleRegister = async (e: React.FormEvent) => {
@@ -169,7 +294,6 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onRegistrationSuccess, onBa
     setLoading(true);
     setMessage('');
 
-    // Validación final antes del envío
     if (!isFormValid) {
       setMessage('❌ Complete todos los campos correctamente antes de continuar');
       setLoading(false);
@@ -177,29 +301,33 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onRegistrationSuccess, onBa
     }
 
     try {
-      console.log('🔄 Enviando datos:', registerData);
+      const requestBody: any = { ...registerData };
+
+      // Agregar preguntas de seguridad si están configuradas
+      if (showSecurityQuestions && userSecurityQuestions.length > 0) {
+        requestBody.securityQuestions = {
+          questions: userSecurityQuestions.filter(q => q.questionId > 0 && q.answer.trim())
+        };
+      }
+
+      console.log('🔄 Enviando datos:', requestBody);
       
       const response = await fetch('http://localhost:3000/api/v1/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(registerData),
+        body: JSON.stringify(requestBody),
       });
 
-      console.log('📡 Respuesta recibida:', {
-        status: response.status,
-        statusText: response.statusText,
-        ok: response.ok
-      });
-
-      // Leer el contenido de la respuesta
       const result = await response.json();
-      console.log('✅ JSON parseado:', result);
+      console.log('📡 Respuesta recibida:', result);
 
-      // Verificar si la respuesta es exitosa
       if (response.ok && result.success) {
-        // CORRECCIÓN: result.data ES directamente el user, no result.data.user
         const unitName = units.find(u => u.id === registerData.organizationalUnitId)?.name;
-        setMessage(`🎉 ¡Registro exitoso! Usuario ${result.data.firstName} creado en ${unitName}`);
+        const securityInfo = showSecurityQuestions && userSecurityQuestions.length > 0 
+          ? ` con ${userSecurityQuestions.length} preguntas de seguridad` 
+          : '';
+        
+        setMessage(`🎉 ¡Registro exitoso! Usuario ${result.data.firstName} creado en ${unitName}${securityInfo}`);
         
         // Limpiar formulario
         setRegisterData({
@@ -209,6 +337,8 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onRegistrationSuccess, onBa
           lastName: '',
           organizationalUnitId: 1
         });
+        setUserSecurityQuestions([]);
+        setShowSecurityQuestions(false);
         
         // Secuencia de mensajes y redirección
         setTimeout(() => {
@@ -224,7 +354,7 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onRegistrationSuccess, onBa
         }, 5000);
         
       } else {
-        // Manejar errores HTTP específicos - MEJORADO
+        // Manejar errores HTTP específicos
         switch (response.status) {
           case 409:
             setMessage('👤 Este email ya está registrado. ¿Desea iniciar sesión en su lugar?');
@@ -234,6 +364,8 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onRegistrationSuccess, onBa
               setMessage('👤 El usuario ya existe: Este email ya está registrado en el sistema');
             } else if (result.message?.includes('organizacional')) {
               setMessage('🏢 Unidad organizacional inválida. Seleccione una opción válida');
+            } else if (result.message?.includes('preguntas de seguridad')) {
+              setMessage(`🔒 Error en preguntas de seguridad: ${result.message}`);
             } else if (result.message?.includes('password') || result.error?.includes('contraseña')) {
               setMessage(`🔒 ${result.error || result.message}`);
             } else {
@@ -248,7 +380,6 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onRegistrationSuccess, onBa
         }
       }
     } catch (error: any) {
-      // Solo mostrar error de conexión si realmente es un error de red
       console.error('❌ Error de red completo:', error);
       setMessage('🔌 Error de conexión: Verifique que el servidor esté ejecutándose en puerto 3000');
     } finally {
@@ -295,7 +426,7 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onRegistrationSuccess, onBa
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-green-50 to-blue-100 flex items-center justify-center p-4">
-      <div className="max-w-md w-full bg-white rounded-lg shadow-lg p-8">
+      <div className="max-w-lg w-full bg-white rounded-lg shadow-lg p-8">
         <div className="text-center mb-8">
           <div className="mx-auto h-16 w-16 bg-green-600 rounded-full flex items-center justify-center mb-4">
             <span className="text-white text-2xl font-bold">📝</span>
@@ -305,6 +436,7 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onRegistrationSuccess, onBa
         </div>
 
         <form onSubmit={handleRegister} className="space-y-4">
+          {/* Campos básicos */}
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -383,6 +515,100 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onRegistrationSuccess, onBa
               ))}
             </select>
             <p className="text-xs text-gray-500 mt-1">Seleccione la unidad donde trabajará</p>
+          </div>
+
+          {/* Sección de preguntas de seguridad */}
+          <div className="border-t pt-4">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="text-sm font-medium text-gray-700">Preguntas de Seguridad</h3>
+                <p className="text-xs text-gray-500">Opcional - Mejora la seguridad de tu cuenta</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowSecurityQuestions(!showSecurityQuestions);
+                  if (!showSecurityQuestions) {
+                    loadSecurityQuestions();
+                  }
+                }}
+                className={`px-3 py-1 text-xs rounded-full transition-colors ${
+                  showSecurityQuestions 
+                    ? 'bg-green-100 text-green-800 hover:bg-green-200' 
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                }`}
+              >
+                {showSecurityQuestions ? '🔒 Configurando' : '🔓 Configurar'}
+              </button>
+            </div>
+
+            {showSecurityQuestions && (
+              <div className="space-y-4 bg-gray-50 p-4 rounded-lg">
+                {loadingQuestions ? (
+                  <div className="text-center py-4">
+                    <span className="text-gray-500">🔄 Cargando preguntas...</span>
+                  </div>
+                ) : (
+                  <>
+                    {userSecurityQuestions.map((userQuestion, index) => (
+                      <div key={index} className="bg-white p-3 rounded-lg border">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-sm font-medium text-gray-700">
+                            Pregunta {index + 1}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => removeSecurityQuestion(index)}
+                            className="text-red-500 hover:text-red-700 text-xs"
+                          >
+                            ❌ Eliminar
+                          </button>
+                        </div>
+                        
+                        <div className="space-y-2">
+                          <select
+                            value={userQuestion.questionId}
+                            onChange={(e) => updateSecurityQuestion(index, 'questionId', parseInt(e.target.value))}
+                            className={getInputClasses(securityValidation[`question_${index}`], 'text-sm')}
+                          >
+                            <option value={0}>Seleccione una pregunta...</option>
+                            {getAvailableQuestions(index).map(q => (
+                              <option key={q.id} value={q.id}>{q.questionText}</option>
+                            ))}
+                          </select>
+                          <FieldValidationMessage validation={securityValidation[`question_${index}`]} />
+                          
+                          <input
+                            type="text"
+                            value={userQuestion.answer}
+                            onChange={(e) => updateSecurityQuestion(index, 'answer', e.target.value)}
+                            placeholder="Su respuesta..."
+                            className={getInputClasses(securityValidation[`answer_${index}`], 'text-sm')}
+                          />
+                          <FieldValidationMessage validation={securityValidation[`answer_${index}`]} />
+                        </div>
+                      </div>
+                    ))}
+
+                    {userSecurityQuestions.length < 3 && (
+                      <button
+                        type="button"
+                        onClick={addSecurityQuestion}
+                        className="w-full py-2 px-4 border-2 border-dashed border-gray-300 rounded-lg text-gray-500 hover:border-green-400 hover:text-green-600 transition-colors text-sm"
+                      >
+                        ➕ Agregar pregunta de seguridad ({userSecurityQuestions.length}/3)
+                      </button>
+                    )}
+
+                    {userSecurityQuestions.length > 0 && (
+                      <div className="text-xs text-gray-500 bg-blue-50 p-2 rounded border-l-4 border-blue-400">
+                        💡 Las preguntas de seguridad son opcionales pero recomendadas. Te ayudarán a recuperar tu cuenta si olvidas tu contraseña.
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
           </div>
 
           {message && (

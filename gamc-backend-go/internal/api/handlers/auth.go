@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"gamc-backend-go/internal/config"
@@ -242,7 +244,159 @@ func (h *AuthHandler) VerifyToken(c *gin.Context) {
 }
 
 // ========================================
-// HANDLERS DE RESET DE CONTRASEÑA
+// HANDLERS DE PREGUNTAS DE SEGURIDAD
+// ========================================
+
+// GetSecurityQuestions maneja GET /api/v1/auth/security-questions
+func (h *AuthHandler) GetSecurityQuestions(c *gin.Context) {
+	questions, err := h.authService.GetSecurityQuestions(c.Request.Context())
+	if err != nil {
+		response.Error(c, http.StatusInternalServerError, "Error al obtener preguntas", err.Error())
+		return
+	}
+
+	// Convertir a respuestas
+	var questionResponses []models.SecurityQuestionResponse
+	for _, q := range questions {
+		questionResponses = append(questionResponses, *q.ToResponse())
+	}
+
+	response.Success(c, "Preguntas de seguridad obtenidas", gin.H{
+		"questions": questionResponses,
+		"count":     len(questionResponses),
+	})
+}
+
+// GetUserSecurityStatus maneja GET /api/v1/auth/security-status
+func (h *AuthHandler) GetUserSecurityStatus(c *gin.Context) {
+	// Obtener usuario desde middleware de autenticación
+	userID, exists := c.Get("userID")
+	if !exists {
+		response.Error(c, http.StatusUnauthorized, "Usuario no autenticado", "")
+		return
+	}
+
+	status, err := h.authService.GetUserSecurityStatus(c.Request.Context(), userID.(string))
+	if err != nil {
+		response.Error(c, http.StatusInternalServerError, "Error al obtener estado", err.Error())
+		return
+	}
+
+	response.Success(c, "Estado de seguridad obtenido", status)
+}
+
+// SetupSecurityQuestions maneja POST /api/v1/auth/security-questions
+func (h *AuthHandler) SetupSecurityQuestions(c *gin.Context) {
+	// Obtener usuario desde middleware de autenticación
+	userID, exists := c.Get("userID")
+	if !exists {
+		response.Error(c, http.StatusUnauthorized, "Usuario no autenticado", "")
+		return
+	}
+
+	var req models.SecurityQuestionSetupRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, "Datos de entrada inválidos", err.Error())
+		return
+	}
+
+	// Validar datos de entrada
+	if err := validator.Validate(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, "Datos de entrada inválidos", err.Error())
+		return
+	}
+
+	// Ejecutar configuración
+	if err := h.authService.SetupSecurityQuestions(c.Request.Context(), userID.(string), &req); err != nil {
+		response.Error(c, http.StatusBadRequest, "Error al configurar preguntas", err.Error())
+		return
+	}
+
+	response.Success(c, "Preguntas de seguridad configuradas exitosamente", gin.H{
+		"message":      "Las preguntas de seguridad han sido configuradas",
+		"questionsSet": len(req.Questions),
+	})
+}
+
+// UpdateSecurityQuestion maneja PUT /api/v1/auth/security-questions/:questionId
+func (h *AuthHandler) UpdateSecurityQuestion(c *gin.Context) {
+	// Obtener usuario desde middleware de autenticación
+	userID, exists := c.Get("userID")
+	if !exists {
+		response.Error(c, http.StatusUnauthorized, "Usuario no autenticado", "")
+		return
+	}
+
+	// Obtener ID de pregunta desde parámetros
+	questionIDStr := c.Param("questionId")
+	questionID, err := strconv.Atoi(questionIDStr)
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, "ID de pregunta inválido", "")
+		return
+	}
+
+	var body struct {
+		NewAnswer string `json:"newAnswer" validate:"required,min=2,max=100"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		response.Error(c, http.StatusBadRequest, "Datos de entrada inválidos", err.Error())
+		return
+	}
+
+	// Validar datos
+	if err := validator.Validate(&body); err != nil {
+		response.Error(c, http.StatusBadRequest, "Datos de entrada inválidos", err.Error())
+		return
+	}
+
+	req := &models.SecurityQuestionUpdateRequest{
+		QuestionID: questionID,
+		NewAnswer:  body.NewAnswer,
+	}
+
+	// Ejecutar actualización
+	if err := h.authService.UpdateSecurityQuestion(c.Request.Context(), userID.(string), req); err != nil {
+		response.Error(c, http.StatusBadRequest, "Error al actualizar pregunta", err.Error())
+		return
+	}
+
+	response.Success(c, "Pregunta de seguridad actualizada exitosamente", gin.H{
+		"questionId": questionID,
+		"message":    "La respuesta ha sido actualizada",
+	})
+}
+
+// RemoveSecurityQuestion maneja DELETE /api/v1/auth/security-questions/:questionId
+func (h *AuthHandler) RemoveSecurityQuestion(c *gin.Context) {
+	// Obtener usuario desde middleware de autenticación
+	userID, exists := c.Get("userID")
+	if !exists {
+		response.Error(c, http.StatusUnauthorized, "Usuario no autenticado", "")
+		return
+	}
+
+	// Obtener ID de pregunta desde parámetros
+	questionIDStr := c.Param("questionId")
+	questionID, err := strconv.Atoi(questionIDStr)
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, "ID de pregunta inválido", "")
+		return
+	}
+
+	// Ejecutar eliminación
+	if err := h.authService.RemoveSecurityQuestion(c.Request.Context(), userID.(string), questionID); err != nil {
+		response.Error(c, http.StatusBadRequest, "Error al eliminar pregunta", err.Error())
+		return
+	}
+
+	response.Success(c, "Pregunta de seguridad eliminada exitosamente", gin.H{
+		"questionId": questionID,
+		"message":    "La pregunta ha sido eliminada",
+	})
+}
+
+// ========================================
+// HANDLERS DE RESET DE CONTRASEÑA CON PREGUNTAS DE SEGURIDAD
 // ========================================
 
 // RequestPasswordReset maneja POST /api/v1/auth/forgot-password
@@ -264,7 +418,7 @@ func (h *AuthHandler) RequestPasswordReset(c *gin.Context) {
 	userAgent := c.GetHeader("User-Agent")
 
 	// Ejecutar solicitud de reset
-	err := h.authService.RequestPasswordReset(c.Request.Context(), &req, ipAddress, userAgent)
+	result, err := h.authService.RequestPasswordReset(c.Request.Context(), &req, ipAddress, userAgent)
 	if err != nil {
 		// Clasificar errores por tipo
 		if err.Error() == "solo usuarios con email @gamc.gov.bo pueden solicitar reset de contraseña" {
@@ -279,11 +433,58 @@ func (h *AuthHandler) RequestPasswordReset(c *gin.Context) {
 		return
 	}
 
-	// Respuesta exitosa (siempre igual por seguridad)
-	response.Success(c, "Solicitud de reset procesada", gin.H{
-		"message": "Si el email existe y es válido, recibirás un enlace de reset en tu correo institucional",
-		"note":    "Solo emails @gamc.gov.bo pueden solicitar reset de contraseña",
-	})
+	// Respuesta exitosa con información de pregunta de seguridad si aplica
+	response.Success(c, "Solicitud de reset procesada", result)
+}
+
+// GetPasswordResetStatus maneja GET /api/v1/auth/reset-status?email=
+func (h *AuthHandler) GetPasswordResetStatus(c *gin.Context) {
+	email := c.Query("email")
+	if email == "" {
+		response.Error(c, http.StatusBadRequest, "Email requerido", "Debe proporcionar el parámetro email")
+		return
+	}
+
+	// Obtener estado del proceso de reset por email
+	status, err := h.authService.GetPasswordResetStatusByEmail(c.Request.Context(), email)
+	if err != nil {
+		response.Error(c, http.StatusInternalServerError, "Error al obtener estado", err.Error())
+		return
+	}
+
+	response.Success(c, "Estado de reset obtenido", status)
+}
+
+// VerifySecurityQuestion maneja POST /api/v1/auth/verify-security-question
+func (h *AuthHandler) VerifySecurityQuestion(c *gin.Context) {
+	var req models.PasswordResetVerifySecurityRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, "Datos de entrada inválidos", err.Error())
+		return
+	}
+
+	// Validar datos de entrada
+	if err := validator.Validate(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, "Datos de entrada inválidos", err.Error())
+		return
+	}
+
+	// Obtener información del cliente
+	ipAddress := c.ClientIP()
+
+	// Ejecutar verificación
+	result, err := h.authService.VerifySecurityQuestion(c.Request.Context(), &req, ipAddress)
+	if err != nil {
+		response.Error(c, http.StatusInternalServerError, "Error al verificar pregunta", err.Error())
+		return
+	}
+
+	// Respuesta basada en el resultado
+	if result.Success {
+		response.Success(c, "Pregunta verificada exitosamente", result)
+	} else {
+		response.Error(c, http.StatusBadRequest, "Verificación fallida", result.Message)
+	}
 }
 
 // ConfirmPasswordReset maneja POST /api/v1/auth/reset-password
@@ -307,19 +508,24 @@ func (h *AuthHandler) ConfirmPasswordReset(c *gin.Context) {
 	err := h.authService.ConfirmPasswordReset(c.Request.Context(), &req, ipAddress)
 	if err != nil {
 		// Clasificar errores por tipo
-		if err.Error() == "token de reset inválido o expirado" {
+		switch err.Error() {
+		case "token de reset inválido o expirado":
 			response.Error(c, http.StatusBadRequest, "Token inválido", "El token de reset es inválido o ha expirado")
-			return
-		}
-		if err.Error() == "token de reset expirado" {
+		case "token de reset expirado":
 			response.Error(c, http.StatusBadRequest, "Token expirado", "El token de reset ha expirado. Solicite un nuevo reset")
-			return
-		}
-		if err.Error() == "token de reset ya utilizado" {
+		case "token de reset ya utilizado":
 			response.Error(c, http.StatusBadRequest, "Token usado", "Este token ya fue utilizado. Solicite un nuevo reset si es necesario")
-			return
+		case "debe verificar la pregunta de seguridad primero":
+			response.Error(c, http.StatusBadRequest, "Verificación requerida", "Debe verificar la pregunta de seguridad antes de cambiar la contraseña")
+		case "demasiados intentos fallidos - token invalidado":
+			response.Error(c, http.StatusBadRequest, "Token invalidado", "Demasiados intentos fallidos. Solicite un nuevo reset")
+		default:
+			if strings.Contains(err.Error(), "respuesta de seguridad incorrecta") {
+				response.Error(c, http.StatusBadRequest, "Respuesta incorrecta", err.Error())
+			} else {
+				response.Error(c, http.StatusBadRequest, "Error en reset", err.Error())
+			}
 		}
-		response.Error(c, http.StatusBadRequest, "Error en reset", err.Error())
 		return
 	}
 
@@ -329,8 +535,12 @@ func (h *AuthHandler) ConfirmPasswordReset(c *gin.Context) {
 	})
 }
 
-// GetPasswordResetStatus maneja GET /api/v1/auth/reset-status (endpoint protegido para admins)
-func (h *AuthHandler) GetPasswordResetStatus(c *gin.Context) {
+// ========================================
+// HANDLERS ADMINISTRATIVOS
+// ========================================
+
+// GetPasswordResetHistory maneja GET /api/v1/auth/reset-history (endpoint protegido)
+func (h *AuthHandler) GetPasswordResetHistory(c *gin.Context) {
 	// Este endpoint está protegido por middleware de autenticación
 	userID, exists := c.Get("userID")
 	if !exists {
@@ -338,14 +548,14 @@ func (h *AuthHandler) GetPasswordResetStatus(c *gin.Context) {
 		return
 	}
 
-	// Obtener estado de tokens de reset
-	tokens, err := h.authService.GetPasswordResetStatus(c.Request.Context(), userID.(string))
+	// Obtener historial de tokens de reset
+	tokens, err := h.authService.GetPasswordResetHistory(c.Request.Context(), userID.(string))
 	if err != nil {
-		response.Error(c, http.StatusInternalServerError, "Error al obtener estado", err.Error())
+		response.Error(c, http.StatusInternalServerError, "Error al obtener historial", err.Error())
 		return
 	}
 
-	response.Success(c, "Estado de reset obtenido", gin.H{
+	response.Success(c, "Historial de reset obtenido", gin.H{
 		"tokens": tokens,
 		"count":  len(tokens),
 	})
