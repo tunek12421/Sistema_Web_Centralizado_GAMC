@@ -1,8 +1,7 @@
 // src/services/passwordResetService.ts
-// Servicio para todas las operaciones de reset de contraseña
-// Integrado con preguntas de seguridad y arquitectura existente
+// CORRECCIÓN: Servicio sin credentials para operaciones públicas de reset
 
-import { apiClient } from './api';
+import axios from 'axios';
 import type { ApiResponse } from '../types/index';
 import type { 
   PasswordResetRequest,
@@ -53,7 +52,7 @@ export interface PasswordResetVerifySecurityResponse {
   verified: boolean;
   canProceedToReset: boolean;
   attemptsRemaining: number;
-  resetToken?: string; // Solo se devuelve si la verificación es exitosa
+  resetToken?: string;
 }
 
 export interface PasswordResetStatusByEmailResponse {
@@ -77,6 +76,22 @@ export type { PasswordResetErrorType };
 
 class PasswordResetService {
 
+  // Cliente HTTP específico para operaciones públicas (sin credentials)
+  private publicClient = axios.create({
+    baseURL: import.meta.env.VITE_API_URL || 'http://localhost:3000/api/v1',
+    withCredentials: false, // 🔧 CORRECCIÓN: Sin credentials para operaciones públicas
+    timeout: PASSWORD_RESET_CONFIG.REQUEST_TIMEOUT,
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+
+  // Cliente HTTP para operaciones que requieren auth (importado desde api.ts)
+  private async getAuthenticatedClient() {
+    const { apiClient } = await import('./api');
+    return apiClient;
+  }
+
   // ========================================
   // ENDPOINTS PÚBLICOS DE PREGUNTAS DE SEGURIDAD
   // ========================================
@@ -87,17 +102,11 @@ class PasswordResetService {
    */
   async getSecurityQuestions(): Promise<SecurityQuestion[]> {
     try {
-      const response = await apiClient.get<ApiResponse<{ questions: SecurityQuestion[]; count: number }>>(
-        '/auth/security-questions',
-        {
-          timeout: PASSWORD_RESET_CONFIG.REQUEST_TIMEOUT,
-          headers: {
-            'Content-Type': 'application/json'
-          }
-        }
+      const response = await this.publicClient.get<ApiResponse<{ questions: SecurityQuestion[]; count: number }>>(
+        '/auth/security-questions'
       );
 
-      return response.data!.questions;
+      return response.data.data!.questions;
     } catch (error: any) {
       throw this.handlePasswordResetError(error);
     }
@@ -110,22 +119,22 @@ class PasswordResetService {
    */
   async requestPasswordReset(request: PasswordResetRequest): Promise<PasswordResetInitResponse> {
     try {
-      const response = await apiClient.post<ApiResponse<PasswordResetInitResponse>>(
+      console.log('🔧 Using public client for forgot-password request');
+      
+      const response = await this.publicClient.post<ApiResponse<PasswordResetInitResponse>>(
         '/auth/forgot-password',
-        request,
-        {
-          timeout: PASSWORD_RESET_CONFIG.REQUEST_TIMEOUT,
-          headers: {
-            'Content-Type': 'application/json'
-          }
-        }
+        request
       );
+
+      console.log('🔧 Public client response:', response.data);
 
       // Registrar el timestamp de la solicitud para rate limiting
       this.recordResetRequest();
 
-      return response.data!;
+      // 🔧 CORRECCIÓN: Retornar la estructura completa de data
+      return response.data.data!;
     } catch (error: any) {
+      console.error('🔧 Public client error:', error);
       throw this.handlePasswordResetError(error);
     }
   }
@@ -136,18 +145,12 @@ class PasswordResetService {
    */
   async verifySecurityQuestion(request: PasswordResetVerifySecurityRequest): Promise<PasswordResetVerifySecurityResponse> {
     try {
-      const response = await apiClient.post<ApiResponse<PasswordResetVerifySecurityResponse>>(
+      const response = await this.publicClient.post<ApiResponse<PasswordResetVerifySecurityResponse>>(
         '/auth/verify-security-question',
-        request,
-        {
-          timeout: PASSWORD_RESET_CONFIG.REQUEST_TIMEOUT,
-          headers: {
-            'Content-Type': 'application/json'
-          }
-        }
+        request
       );
 
-      return response.data!;
+      return response.data.data!;
     } catch (error: any) {
       throw this.handlePasswordResetError(error);
     }
@@ -159,14 +162,11 @@ class PasswordResetService {
    */
   async getPasswordResetStatusByEmail(email: string): Promise<PasswordResetStatusByEmailResponse> {
     try {
-      const response = await apiClient.get<ApiResponse<PasswordResetStatusByEmailResponse>>(
-        `/auth/reset-status?email=${encodeURIComponent(email)}`,
-        {
-          timeout: PASSWORD_RESET_CONFIG.REQUEST_TIMEOUT
-        }
+      const response = await this.publicClient.get<ApiResponse<PasswordResetStatusByEmailResponse>>(
+        `/auth/reset-status?email=${encodeURIComponent(email)}`
       );
 
-      return response.data!;
+      return response.data.data!;
     } catch (error: any) {
       throw this.handlePasswordResetError(error);
     }
@@ -178,21 +178,15 @@ class PasswordResetService {
    */
   async confirmPasswordReset(request: PasswordResetConfirm): Promise<PasswordResetConfirmResponse> {
     try {
-      const response = await apiClient.post<PasswordResetConfirmResponse>(
+      const response = await this.publicClient.post<PasswordResetConfirmResponse>(
         '/auth/reset-password',
-        request,
-        {
-          timeout: PASSWORD_RESET_CONFIG.REQUEST_TIMEOUT,
-          headers: {
-            'Content-Type': 'application/json'
-          }
-        }
+        request
       );
 
       // Limpiar rate limiting tras reset exitoso
       this.clearRateLimitRecord();
 
-      return response;
+      return response.data;
     } catch (error: any) {
       throw this.handlePasswordResetError(error);
     }
@@ -209,11 +203,9 @@ class PasswordResetService {
    */
   async getPasswordResetHistory(): Promise<PasswordResetToken[]> {
     try {
+      const apiClient = await this.getAuthenticatedClient();
       const response = await apiClient.get<ApiResponse<{ tokens: PasswordResetToken[]; count: number }>>(
-        '/auth/reset-history',
-        {
-          timeout: PASSWORD_RESET_CONFIG.REQUEST_TIMEOUT
-        }
+        '/auth/reset-history'
       );
 
       return response.data!.tokens;
@@ -232,12 +224,10 @@ class PasswordResetService {
    */
   async cleanupExpiredTokens(): Promise<PasswordResetCleanupResponse> {
     try {
+      const apiClient = await this.getAuthenticatedClient();
       const response = await apiClient.post<PasswordResetCleanupResponse>(
         '/auth/admin/cleanup-tokens',
-        {},
-        {
-          timeout: PASSWORD_RESET_CONFIG.REQUEST_TIMEOUT
-        }
+        {}
       );
 
       return response;
@@ -254,14 +244,56 @@ class PasswordResetService {
    * Validar email antes de enviar solicitud
    */
   validateEmailForReset(email: string): { isValid: boolean; error?: string } {
-    if (!email?.trim()) {
+    if (!email || typeof email !== 'string') {
       return { isValid: false, error: 'Email es requerido' };
     }
 
-    if (!PASSWORD_RESET_CONFIG.EMAIL_PATTERN.test(email.trim())) {
+    const trimmedEmail = email.trim();
+    
+    if (trimmedEmail.length === 0) {
+      return { isValid: false, error: 'Email no puede estar vacío' };
+    }
+
+    // Validar formato básico
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(trimmedEmail)) {
+      return { isValid: false, error: 'Formato de email inválido' };
+    }
+
+    // Validar dominio institucional
+    if (!trimmedEmail.endsWith('@gamc.gov.bo')) {
+      return { isValid: false, error: 'Solo se permiten emails @gamc.gov.bo' };
+    }
+
+    return { isValid: true };
+  }
+
+  /**
+   * Validar contraseña antes de reset
+   */
+  validatePasswordForReset(password: string): { isValid: boolean; error?: string } {
+    if (!password || typeof password !== 'string') {
+      return { isValid: false, error: 'Contraseña es requerida' };
+    }
+
+    if (password.length < 8) {
+      return { isValid: false, error: 'Contraseña debe tener al menos 8 caracteres' };
+    }
+
+    if (password.length > 128) {
+      return { isValid: false, error: 'Contraseña no puede exceder 128 caracteres' };
+    }
+
+    // Validar complejidad básica
+    const hasUpperCase = /[A-Z]/.test(password);
+    const hasLowerCase = /[a-z]/.test(password);
+    const hasNumbers = /\d/.test(password);
+    const hasSpecialChar = /[!@#$%^&*(),.?":{}|<>]/.test(password);
+
+    if (!hasUpperCase || !hasLowerCase || !hasNumbers || !hasSpecialChar) {
       return { 
         isValid: false, 
-        error: 'Solo emails @gamc.gov.bo pueden solicitar reset de contraseña' 
+        error: 'Contraseña debe contener mayúsculas, minúsculas, números y símbolos' 
       };
     }
 
@@ -269,146 +301,55 @@ class PasswordResetService {
   }
 
   /**
-   * Validar respuesta de seguridad (NUEVO)
+   * Validar respuesta de pregunta de seguridad
    */
   validateSecurityAnswer(answer: string): { isValid: boolean; error?: string } {
-    if (!answer?.trim()) {
-      return { isValid: false, error: 'La respuesta es requerida' };
+    if (!answer || typeof answer !== 'string') {
+      return { isValid: false, error: 'Respuesta es requerida' };
     }
 
     const trimmedAnswer = answer.trim();
+    
+    if (trimmedAnswer.length === 0) {
+      return { isValid: false, error: 'Respuesta no puede estar vacía' };
+    }
 
-    if (trimmedAnswer.length < 2) {
-      return { 
-        isValid: false, 
-        error: 'La respuesta debe tener al menos 2 caracteres' 
-      };
+    if (trimmedAnswer.length < 1) {
+      return { isValid: false, error: 'Respuesta debe tener al menos 1 caracter' };
     }
 
     if (trimmedAnswer.length > 100) {
-      return { 
-        isValid: false, 
-        error: 'La respuesta no puede exceder 100 caracteres' 
-      };
-    }
-
-    // Verificar que no sea solo caracteres repetidos
-    if (/^(.)\1+$/.test(trimmedAnswer)) {
-      return {
-        isValid: false,
-        error: 'La respuesta no puede ser solo caracteres repetidos'
-      };
+      return { isValid: false, error: 'Respuesta no puede exceder 100 caracteres' };
     }
 
     return { isValid: true };
   }
 
-  /**
-   * Validar nueva contraseña
-   */
-  validatePasswordForReset(password: string): { isValid: boolean; error?: string } {
-    if (!password) {
-      return { isValid: false, error: 'La contraseña es requerida' };
-    }
+  // ========================================
+  // RATE LIMITING
+  // ========================================
 
-    if (password.length < PASSWORD_RESET_CONFIG.MIN_PASSWORD_LENGTH) {
-      return { 
-        isValid: false, 
-        error: `La contraseña debe tener al menos ${PASSWORD_RESET_CONFIG.MIN_PASSWORD_LENGTH} caracteres` 
-      };
-    }
-
-    if (!PASSWORD_RESET_CONFIG.PASSWORD_PATTERN.test(password)) {
-      return { 
-        isValid: false, 
-        error: 'La contraseña debe incluir mayúsculas, minúsculas, números y símbolos (@$!%*?&)' 
-      };
-    }
-
-    return { isValid: true };
+  recordResetRequest(): void {
+    const timestamp = Date.now().toString();
+    localStorage.setItem('lastPasswordResetRequest', timestamp);
   }
 
-  /**
-   * Flujo completo de reset con manejo de preguntas de seguridad
-   */
-  async performCompletePasswordReset(
-    email: string,
-    newPassword: string,
-    onSecurityQuestionRequired?: (question: SecurityQuestionForReset) => Promise<string>
-  ): Promise<PasswordResetConfirmResponse> {
+  clearRateLimitRecord(): void {
+    localStorage.removeItem('lastPasswordResetRequest');
+  }
+
+  getRateLimitTimeRemaining(): number {
+    const lastRequestTime = localStorage.getItem('lastPasswordResetRequest');
+    if (!lastRequestTime) return 0;
+
+    const timeDiff = Date.now() - parseInt(lastRequestTime);
+    const timeRemaining = PASSWORD_RESET_CONFIG.RATE_LIMIT_WINDOW - timeDiff;
     
-    // Paso 1: Validar datos iniciales
-    const emailValidation = this.validateEmailForReset(email);
-    if (!emailValidation.isValid) {
-      throw new PasswordResetError(
-        'validation_error',
-        emailValidation.error!
-      );
-    }
+    return Math.max(0, Math.ceil(timeRemaining / 1000));
+  }
 
-    const passwordValidation = this.validatePasswordForReset(newPassword);
-    if (!passwordValidation.isValid) {
-      throw new PasswordResetError(
-        'password_weak',
-        passwordValidation.error!
-      );
-    }
-
-    // Paso 2: Solicitar reset
-    const resetRequest = await this.requestPasswordReset({ email });
-    
-    let resetToken: string;
-
-    // Paso 3: Manejar pregunta de seguridad si es requerida
-    if (resetRequest.requiresSecurityQuestion && resetRequest.securityQuestion) {
-      if (!onSecurityQuestionRequired) {
-        throw new PasswordResetError(
-          'validation_error',
-          'Se requiere verificación de pregunta de seguridad pero no se proporcionó manejador'
-        );
-      }
-
-      // Obtener respuesta del usuario
-      const userAnswer = await onSecurityQuestionRequired(resetRequest.securityQuestion);
-      
-      // Validar respuesta
-      const answerValidation = this.validateSecurityAnswer(userAnswer);
-      if (!answerValidation.isValid) {
-        throw new PasswordResetError(
-          'validation_error',
-          answerValidation.error!
-        );
-      }
-
-      // Verificar pregunta de seguridad
-      const verifyResponse = await this.verifySecurityQuestion({
-        email,
-        questionId: resetRequest.securityQuestion.questionId,
-        answer: userAnswer
-      });
-
-      if (!verifyResponse.verified || !verifyResponse.resetToken) {
-        throw new PasswordResetError(
-          'validation_error',
-          verifyResponse.message
-        );
-      }
-
-      resetToken = verifyResponse.resetToken;
-    } else {
-      // Para usuarios sin preguntas de seguridad, el token debería venir por email
-      // En este caso, necesitamos que el usuario proporcione el token manualmente
-      throw new PasswordResetError(
-        'validation_error',
-        'Token de reset enviado por email. Revise su correo institucional'
-      );
-    }
-
-    // Paso 4: Confirmar reset con token obtenido
-    return await this.confirmPasswordReset({
-      token: resetToken,
-      newPassword
-    });
+  canMakeResetRequest(): boolean {
+    return this.getRateLimitTimeRemaining() === 0;
   }
 
   // ========================================
@@ -419,6 +360,8 @@ class PasswordResetService {
    * Maneja errores específicos de reset de contraseña
    */
   private handlePasswordResetError(error: any): Error {
+    console.log('🔧 Handling error:', error);
+
     // Error de red/timeout
     if (!error.response) {
       return new PasswordResetError(
@@ -428,116 +371,43 @@ class PasswordResetService {
     }
 
     const { status, data } = error.response;
-
-    // Mapear errores HTTP específicos
+    
     switch (status) {
       case 400:
-        if (data?.error?.includes('email no institucional') || data?.error?.includes('gamc.gov.bo')) {
-          return new PasswordResetError(
-            'email_not_institutional',
-            'Solo emails @gamc.gov.bo pueden solicitar reset de contraseña'
-          );
-        }
-        if (data?.error?.includes('token inválido') || data?.error?.includes('token expirado')) {
-          return new PasswordResetError(
-            'token_invalid',
-            'Token de reset inválido o expirado'
-          );
-        }
-        if (data?.error?.includes('contraseña débil') || data?.error?.includes('requisitos')) {
-          return new PasswordResetError(
-            'password_weak',
-            'La contraseña no cumple con los requisitos de seguridad'
-          );
-        }
-        break;
-
+        return new PasswordResetError(
+          'validation_error',
+          data?.message || data?.error || 'Datos de entrada inválidos'
+        );
+      
+      case 403:
+        return new PasswordResetError(
+          'email_not_institutional',
+          'Solo usuarios con email @gamc.gov.bo pueden solicitar reset'
+        );
+      
       case 429:
         return new PasswordResetError(
           'rate_limit_exceeded',
-          'Demasiadas solicitudes. Espere 5 minutos antes de intentar nuevamente.'
+          'Demasiadas solicitudes. Espere antes de intentar nuevamente'
         );
-
+      
       case 404:
         return new PasswordResetError(
-          'email_not_found',
-          'Si el email existe, recibirá instrucciones para restablecer su contraseña'
+          'user_not_found',
+          'Usuario no encontrado'
         );
-
+      
       case 500:
-      default:
         return new PasswordResetError(
           'server_error',
-          'Error interno del servidor. Intente nuevamente más tarde.'
+          'Error interno del servidor'
         );
-    }
-
-    return new PasswordResetError(
-      'validation_error',
-      data?.message || data?.error || 'Error desconocido'
-    );
-  }
-
-  // ========================================
-  // UTILIDADES DE RATE LIMITING
-  // ========================================
-
-  /**
-   * Registra una solicitud de reset para rate limiting
-   */
-  private recordResetRequest(): void {
-    try {
-      localStorage.setItem('gamc_last_reset_request', Date.now().toString());
-    } catch (error) {
-      console.warn('No se pudo registrar rate limiting:', error);
-    }
-  }
-
-  /**
-   * Limpia el registro de rate limiting
-   */
-  private clearRateLimitRecord(): void {
-    try {
-      localStorage.removeItem('gamc_last_reset_request');
-    } catch (error) {
-      console.warn('No se pudo limpiar rate limiting:', error);
-    }
-  }
-
-  /**
-   * Verifica si se puede hacer una nueva solicitud
-   */
-  canMakeNewRequest(): boolean {
-    try {
-      const lastRequest = localStorage.getItem('gamc_last_reset_request');
-      if (!lastRequest) return true;
-
-      const lastRequestTime = parseInt(lastRequest);
-      const now = Date.now();
-      const timeElapsed = now - lastRequestTime;
       
-      return timeElapsed >= PASSWORD_RESET_CONFIG.RATE_LIMIT_WINDOW;
-    } catch {
-      return true;
-    }
-  }
-
-  /**
-   * Obtiene tiempo restante hasta poder hacer nueva solicitud
-   */
-  getTimeUntilNextRequest(): number {
-    try {
-      const lastRequest = localStorage.getItem('gamc_last_reset_request');
-      if (!lastRequest) return 0;
-
-      const lastRequestTime = parseInt(lastRequest);
-      const now = Date.now();
-      const timeElapsed = now - lastRequestTime;
-      const remaining = PASSWORD_RESET_CONFIG.RATE_LIMIT_WINDOW - timeElapsed;
-      
-      return Math.max(0, Math.ceil(remaining / 1000)); // Retornar en segundos
-    } catch {
-      return 0;
+      default:
+        return new PasswordResetError(
+          'unknown_error',
+          data?.message || data?.error || 'Error inesperado'
+        );
     }
   }
 }

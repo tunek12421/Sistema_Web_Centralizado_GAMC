@@ -144,51 +144,65 @@ const App: React.FC = () => {
     }
   };
 
-  // ========================================
-  // HANDLERS DEL PROCESO DE RESET
-  // ========================================
+// CORRECCIÓN PARA App.tsx
+// Reemplazar la función handleForgotPasswordSuccess existente
 
-  // Manejar solicitud de reset exitosa
-  const handleForgotPasswordSuccess = (email: string, data: any) => {
-    console.log('Reset solicitado para:', email, data);
-    
-    setResetProcessData({
-      email: email,
-      requiresSecurityQuestion: data.requiresSecurityQuestion || false,
-      securityQuestion: data.securityQuestion,
-      resetToken: data.resetToken
-    });
+// Manejar solicitud de reset exitosa
+const handleForgotPasswordSuccess = (email: string, requiresSecurityQuestion: boolean, securityQuestion?: any) => {
+  console.log('Reset solicitado para:', email);
+  console.log('Requiere pregunta de seguridad:', requiresSecurityQuestion);
+  console.log('Datos de pregunta:', securityQuestion);
+  
+  // Almacenar datos del proceso de reset
+  setResetProcessData({
+    email: email,
+    requiresSecurityQuestion: requiresSecurityQuestion,
+    securityQuestion: securityQuestion,
+    resetToken: undefined // Se obtendrá después de verificar la pregunta
+  });
 
-    if (data.requiresSecurityQuestion && data.securityQuestion) {
-      setCurrentView('security-question');
-    } else if (data.resetToken) {
-      setCurrentView('reset-password');
-    } else {
-      // Email enviado, volver al login con mensaje
-      setResetSuccessMessage(`Se han enviado instrucciones de recuperación a ${email}`);
-      setCurrentView('login');
-    }
-  };
+  // Determinar el siguiente paso según la respuesta del backend
+  if (requiresSecurityQuestion && securityQuestion) {
+    // Usuario tiene preguntas de seguridad configuradas
+    console.log('→ Transitioning to security-question view');
+    setCurrentView('security-question');
+  } else {
+    // Usuario no tiene preguntas de seguridad o flujo por email
+    console.log('→ Email sent, returning to login');
+    setResetSuccessMessage(`Se han enviado instrucciones de recuperación a ${email}`);
+    setCurrentView('login');
+  }
+};
 
   // Manejar verificación de pregunta de seguridad exitosa
   const handleSecurityQuestionSuccess = (resetToken: string) => {
+    console.log('Pregunta de seguridad verificada, token recibido');
+    
     if (resetProcessData) {
       setResetProcessData({
         ...resetProcessData,
         resetToken: resetToken
       });
+      setCurrentView('reset-password');
+    } else {
+      console.error('No hay datos de reset process disponibles');
+      setCurrentView('forgot-password');
     }
-    setCurrentView('reset-password');
   };
 
   // Manejar reset de contraseña exitoso
-  const handleResetPasswordSuccess = () => {
-    setResetSuccessMessage('¡Contraseña restablecida exitosamente!');
+  const handleResetPasswordSuccess = (message?: string) => {
+    console.log('Reset de contraseña completado exitosamente');
+    
+    const successMsg = message || '¡Contraseña restablecida exitosamente!';
+    setResetSuccessMessage(successMsg);
     setCurrentView('reset-success');
   };
 
   // Manejar finalización del proceso de reset
   const handleResetComplete = () => {
+    console.log('Proceso de reset completado, limpiando estado');
+    
     setResetProcessData(null);
     setResetSuccessMessage('');
     setCurrentView('login');
@@ -280,6 +294,8 @@ const App: React.FC = () => {
         onBack={() => goToView('home')}
         onForgotPassword={() => goToView('forgot-password')}
         fromRegistration={fromRegistration}
+        // Mostrar mensaje de éxito si viene del reset
+        successMessage={resetSuccessMessage}
       />
     );
   }
@@ -297,7 +313,7 @@ const App: React.FC = () => {
         onLoginRedirect={() => goToView('login')}
         onError={(error) => {
           console.error('Error en forgot password:', error);
-          // Manejar error si es necesario
+          // Los errores se manejan internamente en el componente
         }}
       />
     );
@@ -311,9 +327,10 @@ const App: React.FC = () => {
         securityQuestion={resetProcessData.securityQuestion}
         onSuccess={handleSecurityQuestionSuccess}
         onBack={() => goToView('forgot-password')}
+        onNewReset={() => goToView('forgot-password')}
         onError={(error) => {
           console.error('Error en security question:', error);
-          // Volver a forgot password en caso de error
+          // Volver a forgot password para reintentar
           setCurrentView('forgot-password');
         }}
       />
@@ -327,10 +344,18 @@ const App: React.FC = () => {
         token={resetProcessData.resetToken}
         onSuccess={handleResetPasswordSuccess}
         onBack={() => goToView('forgot-password')}
+        onTokenExpired={() => {
+          console.log('Token expirado, volviendo a solicitar reset');
+          setResetProcessData(null);
+          setCurrentView('forgot-password');
+        }}
         onError={(error) => {
           console.error('Error en reset password:', error);
-          // Volver a forgot password en caso de error
-          setCurrentView('forgot-password');
+          // Manejar según tipo de error
+          if (error.type === 'token_expired' || error.type === 'token_invalid') {
+            setResetProcessData(null);
+            setCurrentView('forgot-password');
+          }
         }}
       />
     );
@@ -341,7 +366,14 @@ const App: React.FC = () => {
     return (
       <PasswordResetSuccess 
         message={resetSuccessMessage}
+        autoRedirect={true}
+        redirectDelay={5000}
         onLoginRedirect={handleResetComplete}
+        onNewReset={() => {
+          setResetProcessData(null);
+          setResetSuccessMessage('');
+          setCurrentView('forgot-password');
+        }}
       />
     );
   }

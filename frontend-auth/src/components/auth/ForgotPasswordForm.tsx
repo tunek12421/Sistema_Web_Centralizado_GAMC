@@ -84,71 +84,58 @@ const ForgotPasswordForm: React.FC<ForgotPasswordFormProps> = ({
     }
   }, [timeUntilNextRequest]);
 
-  // Verificar rate limit al cargar
-  useEffect(() => {
-    checkRateLimit();
-  }, []);
-
   // ========================================
   // HANDLERS Y VALIDACIONES
   // ========================================
 
-  /**
-   * Maneja cambios en el campo email
-   */
   const handleEmailChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newEmail = e.target.value;
-    setEmail(newEmail);
+    const value = e.target.value;
+    setEmail(value);
     
     // Validar en tiempo real
-    const validation = validateEmail(newEmail);
-    setEmailValidation(validation);
+    if (value.trim()) {
+      const validation = validateEmail(value);
+      setEmailValidation(validation);
+    } else {
+      setEmailValidation({ isValid: false, message: '', type: '' });
+    }
     
-    // Limpiar mensajes previos
-    if (message) {
+    // Limpiar mensajes cuando el usuario empiece a escribir
+    if (message && !isLoading) {
       setMessage('');
       setMessageType('');
     }
   };
 
-  /**
-   * Verifica rate limit desde localStorage
-   */
-  const checkRateLimit = () => {
-    try {
-      const lastRequestStr = localStorage.getItem('gamc_last_reset_request');
-      if (lastRequestStr) {
-        const lastRequestTime = parseInt(lastRequestStr);
-        const now = Date.now();
-        const timeSinceLastRequest = now - lastRequestTime;
-        const cooldownTime = PASSWORD_RESET_CONFIG.RATE_LIMIT_WINDOW;
-
-        if (timeSinceLastRequest < cooldownTime) {
-          const remainingTime = Math.ceil((cooldownTime - timeSinceLastRequest) / 1000);
-          setIsRateLimited(true);
-          setTimeUntilNextRequest(remainingTime);
-          setLastSubmissionTime(lastRequestTime);
-        }
-      }
-    } catch (error) {
-      console.error('Error checking rate limit:', error);
-    }
-  };
-
-  /**
-   * Registra nueva solicitud para rate limiting
-   */
   const recordRateLimit = () => {
-    try {
-      const now = Date.now();
-      localStorage.setItem('gamc_last_reset_request', now.toString());
-      setLastSubmissionTime(now);
-      setIsRateLimited(true);
-      setTimeUntilNextRequest(300); // 5 minutos = 300 segundos
-    } catch (error) {
-      console.error('Error recording rate limit:', error);
-    }
+    const now = Date.now();
+    setLastSubmissionTime(now);
+    setIsRateLimited(true);
+    setTimeUntilNextRequest(PASSWORD_RESET_CONFIG.RATE_LIMIT_WINDOW / 1000);
+    
+    // Persistir en localStorage para mantener límite entre recargas
+    localStorage.setItem('lastPasswordResetRequest', now.toString());
   };
+
+  const checkRateLimit = () => {
+    const lastRequestTime = localStorage.getItem('lastPasswordResetRequest');
+    if (!lastRequestTime) return false;
+
+    const timeDiff = Date.now() - parseInt(lastRequestTime);
+    if (timeDiff < PASSWORD_RESET_CONFIG.RATE_LIMIT_WINDOW) {
+      const remaining = Math.ceil((PASSWORD_RESET_CONFIG.RATE_LIMIT_WINDOW - timeDiff) / 1000);
+      setTimeUntilNextRequest(remaining);
+      setIsRateLimited(true);
+      return true;
+    }
+
+    return false;
+  };
+
+  // Verificar rate limit al cargar el componente
+  useEffect(() => {
+    checkRateLimit();
+  }, []);
 
   /**
    * Maneja envío del formulario
@@ -183,17 +170,45 @@ const ForgotPasswordForm: React.FC<ForgotPasswordFormProps> = ({
       // Marcar como enviado
       setIsSubmitted(true);
       
-      // Mostrar mensaje de éxito
-      setMessage('✅ ' + (result.message || 'Si el email existe, recibirá instrucciones para restablecer su contraseña'));
-      setMessageType('success');
+      // ✅ CORRECCIÓN FINAL: Verificar si hay preguntas de seguridad y manejar el flujo correctamente
+      console.log('✅ Resultado del servicio corregido:', result);
+      console.log('✅ requiresSecurityQuestion:', result.requiresSecurityQuestion);
+      console.log('✅ securityQuestion:', result.securityQuestion);
+      
+      if (result.requiresSecurityQuestion && result.securityQuestion) {
+        // Usuario tiene preguntas de seguridad configuradas
+        console.log('✅ Usuario tiene preguntas de seguridad - transicionando a security-question');
+        setMessage('✅ Debe responder una pregunta de seguridad para continuar');
+        setMessageType('success');
 
-      // Callback de éxito
-      if (onSuccess) {
-        onSuccess(
-          email.trim(),
-          result.requiresSecurityQuestion || false,
-          result.securityQuestion
-        );
+        // Callback de éxito con datos de pregunta de seguridad
+        if (onSuccess) {
+          console.log('✅ Llamando onSuccess con datos de pregunta de seguridad...');
+          onSuccess(
+            email.trim(),
+            true, // requiresSecurityQuestion
+            {
+              questionId: result.securityQuestion.questionId,
+              questionText: result.securityQuestion.questionText,
+              attempts: result.securityQuestion.attempts || 0,
+              maxAttempts: result.securityQuestion.maxAttempts || 3
+            }
+          );
+        }
+      } else {
+        // Usuario no tiene preguntas de seguridad o flujo por email
+        console.log('✅ Sin preguntas de seguridad - flujo por email');
+        setMessage('✅ ' + (result.message || 'Si el email existe, recibirá instrucciones para restablecer su contraseña'));
+        setMessageType('success');
+
+        // Callback de éxito para flujo por email
+        if (onSuccess) {
+          onSuccess(
+            email.trim(),
+            false, // no requiresSecurityQuestion
+            undefined // no securityQuestion
+          );
+        }
       }
 
     } catch (error: any) {
@@ -223,7 +238,7 @@ const ForgotPasswordForm: React.FC<ForgotPasswordFormProps> = ({
             errorMessage = data?.message || data?.error || 'Error del servidor';
         }
       } else if (error.code === 'NETWORK_ERROR' || !error.response) {
-        errorMessage = 'Error de conexión. Verifique su internet e intente nuevamente';
+        errorMessage = 'Error de conexión. Verifique su internet e intente nuevamente.';
         errorType = 'network_error';
       }
 
@@ -240,9 +255,13 @@ const ForgotPasswordForm: React.FC<ForgotPasswordFormProps> = ({
     }
   };
 
-  /**
-   * Formatea tiempo restante para UI
-   */
+  // ========================================
+  // CAMPOS COMPUTADOS
+  // ========================================
+
+  const isFormValid = emailValidation.isValid && !isRateLimited;
+  const canSubmit = isFormValid && !isLoading && !isSubmitted;
+
   const formatTimeRemaining = (seconds: number): string => {
     const minutes = Math.floor(seconds / 60);
     const remainingSeconds = seconds % 60;
@@ -250,62 +269,35 @@ const ForgotPasswordForm: React.FC<ForgotPasswordFormProps> = ({
     if (minutes > 0) {
       return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
     }
+    
     return `${remainingSeconds}s`;
   };
 
   // ========================================
-  // COMPONENTES DE UI
+  // COMPONENTES AUXILIARES
   // ========================================
 
-  const RateLimitWarning = () => {
-    if (!isRateLimited || timeUntilNextRequest <= 0) return null;
+  const FieldValidationMessage: React.FC<{ validation: FieldValidation }> = ({ validation }) => {
+    if (!validation.message) return null;
 
     return (
-      <div className="mb-4 p-4 bg-amber-50 border border-amber-200 rounded-lg">
-        <div className="flex items-start">
-          <span className="text-amber-600 text-lg mr-3 mt-0.5">⏰</span>
-          <div>
-            <h4 className="text-amber-800 font-semibold text-sm mb-1">
-              Esperando tiempo de seguridad
-            </h4>
-            <p className="text-amber-700 text-sm">
-              Por seguridad, debe esperar <strong>{formatTimeRemaining(timeUntilNextRequest)}</strong> antes de solicitar otro reset.
-            </p>
-            {lastSubmissionTime && (
-              <p className="text-amber-600 text-xs mt-1">
-                Última solicitud: {new Date(lastSubmissionTime).toLocaleTimeString()}
-              </p>
-            )}
-          </div>
-        </div>
+      <div className={getValidationMessageClasses(validation)}>
+        {validation.message}
       </div>
     );
   };
 
-  const SuccessMessage = () => {
-    if (!isSubmitted || messageType !== 'success') return null;
+  const RateLimitMessage: React.FC = () => {
+    if (!isRateLimited || timeUntilNextRequest <= 0) return null;
 
     return (
-      <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg">
-        <div className="flex items-start">
-          <span className="text-green-600 text-lg mr-3 mt-0.5">✅</span>
+      <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+        <div className="flex items-center text-amber-800">
+          <span className="text-amber-600 text-lg mr-2">⏱️</span>
           <div>
-            <h4 className="text-green-800 font-semibold text-sm mb-2">
-              Solicitud enviada exitosamente
-            </h4>
-            <p className="text-green-700 text-sm mb-3">
-              Si su email existe en nuestro sistema, recibirá instrucciones para restablecer su contraseña.
-            </p>
-            <div className="space-y-2">
-              <div className="flex items-center justify-between bg-white p-3 rounded border">
-                <span className="text-sm text-gray-600">Email:</span>
-                <span className="text-sm font-medium text-gray-900">{email}</span>
-              </div>
-              <p className="text-green-600 text-xs">
-                • Revise su bandeja de entrada y carpeta de spam<br/>
-                • El enlace expira en 30 minutos<br/>
-                • Solo emails @gamc.gov.bo son válidos
-              </p>
+            <div className="font-semibold text-sm">Límite de solicitudes alcanzado</div>
+            <div className="text-xs">
+              Próxima solicitud disponible en: <span className="font-mono">{formatTimeRemaining(timeUntilNextRequest)}</span>
             </div>
           </div>
         </div>
@@ -314,17 +306,16 @@ const ForgotPasswordForm: React.FC<ForgotPasswordFormProps> = ({
   };
 
   // ========================================
-  // RENDER PRINCIPAL
+  // RENDERIZADO PRINCIPAL
   // ========================================
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-50 to-blue-100 flex items-center justify-center p-4">
       <div className="max-w-md w-full bg-white rounded-lg shadow-lg p-8">
-        
         {/* Header */}
         <div className="text-center mb-8">
           <div className="mx-auto h-16 w-16 bg-purple-600 rounded-full flex items-center justify-center mb-4">
-            <span className="text-white text-2xl font-bold">🔑</span>
+            <span className="text-white text-2xl">🔑</span>
           </div>
           <h1 className="text-2xl font-bold text-gray-900">¿Olvidaste tu contraseña?</h1>
           <p className="text-gray-600 mt-2">
@@ -333,114 +324,79 @@ const ForgotPasswordForm: React.FC<ForgotPasswordFormProps> = ({
         </div>
 
         {/* Rate Limit Warning */}
-        <RateLimitWarning />
-
-        {/* Success Message */}
-        <SuccessMessage />
+        <RateLimitMessage />
 
         {/* Formulario */}
-        {!isSubmitted && (
-          <form onSubmit={handleSubmit} className="space-y-6">
-            
-            {/* Campo Email */}
-            <div>
-              <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
-                Email Institucional
-              </label>
-              <input
-                ref={emailInputRef}
-                type="email"
-                id="email"
-                name="email"
-                value={email}
-                onChange={handleEmailChange}
-                className={getInputClasses(emailValidation, 
-                  "w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-colors"
-                )}
-                placeholder="usuario@gamc.gov.bo"
-                disabled={isLoading || isRateLimited}
-                autoComplete="email"
-                required
-              />
-              
-              {/* Mensaje de validación */}
-              {emailValidation.message && (
-                <p className={getValidationMessageClasses(emailValidation)}>
-                  {emailValidation.message}
-                </p>
-              )}
-            </div>
-
-            {/* Mensaje general */}
-            {message && messageType !== 'success' && (
-              <div className={`p-3 rounded-lg text-sm ${
-                messageType === 'error' 
-                  ? 'bg-red-50 text-red-700 border border-red-200' 
-                  : 'bg-blue-50 text-blue-700 border border-blue-200'
-              }`}>
-                {message}
-              </div>
-            )}
-
-            {/* Botón Submit */}
-            <button
-              type="submit"
-              disabled={isLoading || isRateLimited || !emailValidation.isValid}
-              className={`w-full py-3 px-4 rounded-lg font-medium transition-all duration-200 ${
-                isLoading || isRateLimited || !emailValidation.isValid
-                  ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                  : 'bg-purple-600 text-white hover:bg-purple-700 active:transform active:scale-95'
-              }`}
-            >
-              {isLoading ? (
-                <div className="flex items-center justify-center">
-                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2"></div>
-                  Procesando...
-                </div>
-              ) : isRateLimited ? (
-                `Espere ${formatTimeRemaining(timeUntilNextRequest)}`
-              ) : (
-                'Enviar instrucciones'
-              )}
-            </button>
-
-          </form>
-        )}
-
-        {/* Botones de navegación */}
-        <div className="mt-8 space-y-3">
-          
-          {/* Botón volver al login */}
-          {onLoginRedirect && (
-            <button
-              onClick={onLoginRedirect}
-              className="w-full py-2 px-4 text-purple-600 bg-purple-50 rounded-lg hover:bg-purple-100 transition-colors text-sm"
-              disabled={isLoading}
-            >
-              ← Volver al inicio de sesión
-            </button>
-          )}
-
-          {/* Botón volver (genérico) */}
-          {onBack && !onLoginRedirect && (
-            <button
-              onClick={onBack}
-              className="w-full py-2 px-4 text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors text-sm"
-              disabled={isLoading}
-            >
-              ← Volver
-            </button>
-          )}
-
-          {/* Información adicional */}
-          <div className="text-center pt-4 border-t border-gray-200">
-            <p className="text-xs text-gray-500">
-              ¿Necesita ayuda? Contacte al administrador del sistema
-            </p>
+        <form onSubmit={handleSubmit} className="space-y-6">
+          {/* Campo Email */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Email Institucional <span className="text-red-500">*</span>
+            </label>
+            <input
+              ref={emailInputRef}
+              type="email"
+              value={email}
+              onChange={handleEmailChange}
+              className={getInputClasses(emailValidation)}
+              placeholder="usuario@gamc.gov.bo"
+              disabled={isLoading || isRateLimited}
+              required
+            />
+            <FieldValidationMessage validation={emailValidation} />
           </div>
 
-        </div>
+          {/* Mensaje de estado */}
+          {message && (
+            <div className={`p-3 rounded-lg text-sm border ${
+              messageType === 'success' 
+                ? 'bg-green-50 text-green-800 border-green-200' 
+                : messageType === 'error'
+                  ? 'bg-red-50 text-red-800 border-red-200'
+                  : messageType === 'warning'
+                    ? 'bg-amber-50 text-amber-800 border-amber-200'
+                    : 'bg-blue-50 text-blue-800 border-blue-200'
+            }`}>
+              {message}
+            </div>
+          )}
 
+          {/* Botón de envío */}
+          <button
+            type="submit"
+            disabled={!canSubmit}
+            className={`w-full py-3 px-4 rounded-lg font-semibold transition-colors ${
+              !canSubmit
+                ? 'bg-gray-400 cursor-not-allowed text-white' 
+                : 'bg-purple-600 hover:bg-purple-700 text-white'
+            }`}
+          >
+            {isLoading ? (
+              <div className="flex items-center justify-center">
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                Enviando instrucciones...
+              </div>
+            ) : isRateLimited ? (
+              `Esperar ${formatTimeRemaining(timeUntilNextRequest)}`
+            ) : (
+              'Enviar instrucciones'
+            )}
+          </button>
+        </form>
+
+        {/* Enlaces de navegación */}
+        <div className="mt-6 text-center space-y-3">
+          <button
+            onClick={onBack}
+            className="text-purple-600 hover:text-purple-700 text-sm font-medium transition-colors"
+          >
+            ← Volver al inicio de sesión
+          </button>
+          
+          <div className="text-xs text-gray-500 border-t pt-3">
+            ¿Necesita ayuda? Contacte al administrador del sistema
+          </div>
+        </div>
       </div>
     </div>
   );

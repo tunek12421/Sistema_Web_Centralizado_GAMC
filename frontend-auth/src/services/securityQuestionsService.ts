@@ -1,8 +1,7 @@
 // src/services/securityQuestionsService.ts
-// Servicio API para gestión de preguntas de seguridad
-// Maneja CRUD de preguntas, verificación durante reset y configuración usuario
+// CORRECCIÓN: Usar cliente sin credentials para operaciones públicas
 
-import { apiClient } from './api';
+import axios from 'axios';
 import type { ApiResponse } from '../types/index';
 import { PASSWORD_RESET_CONFIG } from '../types/passwordReset';
 
@@ -106,19 +105,33 @@ export class SecurityQuestionError extends Error {
 
 class SecurityQuestionsService {
 
+  // Cliente HTTP específico para operaciones públicas (sin credentials)
+  private publicClient = axios.create({
+    baseURL: import.meta.env.VITE_API_URL || 'http://localhost:3000/api/v1',
+    withCredentials: false, // 🔧 CORRECCIÓN: Sin credentials para operaciones públicas
+    timeout: PASSWORD_RESET_CONFIG.REQUEST_TIMEOUT,
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+
+  // Cliente HTTP para operaciones que requieren auth (importado desde api.ts)
+  private async getAuthenticatedClient() {
+    const { apiClient } = await import('./api');
+    return apiClient;
+  }
+
+  // ========================================
+  // OPERACIONES PÚBLICAS (sin autenticación)
+  // ========================================
+
   async getSecurityQuestionsCatalog(): Promise<SecurityQuestion[]> {
     try {
-      const response = await apiClient.get<ApiResponse<{ questions: SecurityQuestionResponse[]; count: number }>>(
-        '/auth/security-questions',
-        {
-          timeout: PASSWORD_RESET_CONFIG.REQUEST_TIMEOUT,
-          headers: {
-            'Content-Type': 'application/json'
-          }
-        }
+      const response = await this.publicClient.get<ApiResponse<{ questions: SecurityQuestionResponse[]; count: number }>>(
+        '/auth/security-questions'
       );
 
-      return response.data!.questions.map(q => ({
+      return response.data.data!.questions.map(q => ({
         id: q.id,
         questionText: q.questionText,
         category: q.category as any
@@ -140,13 +153,37 @@ class SecurityQuestionsService {
     }, {} as Record<string, SecurityQuestion[]>);
   }
 
+  /**
+   * 🔧 CORRECCIÓN: Verificar pregunta de seguridad durante reset (PÚBLICO)
+   * POST /api/v1/auth/verify-security-question
+   */
+  async verifySecurityQuestion(request: VerifySecurityQuestionRequest): Promise<VerifySecurityQuestionResponse> {
+    try {
+      console.log('🔧 Using public client for verify-security-question');
+      this.validateVerifyRequest(request);
+
+      const response = await this.publicClient.post<ApiResponse<VerifySecurityQuestionResponse>>(
+        '/auth/verify-security-question',
+        request
+      );
+
+      console.log('🔧 Verify security question response:', response.data);
+      return response.data.data!;
+    } catch (error: any) {
+      console.error('🔧 Verify security question error:', error);
+      throw this.handleSecurityQuestionError(error);
+    }
+  }
+
+  // ========================================
+  // OPERACIONES PROTEGIDAS (requieren autenticación)
+  // ========================================
+
   async getUserSecurityStatus(): Promise<SecurityQuestionsStatus> {
     try {
+      const apiClient = await this.getAuthenticatedClient();
       const response = await apiClient.get<ApiResponse<SecurityQuestionsStatus>>(
-        '/auth/security-status',
-        {
-          timeout: PASSWORD_RESET_CONFIG.REQUEST_TIMEOUT
-        }
+        '/auth/security-status'
       );
 
       return response.data!;
@@ -159,15 +196,10 @@ class SecurityQuestionsService {
     try {
       this.validateSetupRequest(request);
 
+      const apiClient = await this.getAuthenticatedClient();
       const response = await apiClient.post<ApiResponse<{ configured: number; questions: UserSecurityQuestion[] }>>(
         '/auth/security-questions',
-        request,
-        {
-          timeout: PASSWORD_RESET_CONFIG.REQUEST_TIMEOUT,
-          headers: {
-            'Content-Type': 'application/json'
-          }
-        }
+        request
       );
 
       return response.data!.questions;
@@ -180,15 +212,10 @@ class SecurityQuestionsService {
     try {
       this.validateUpdateRequest(request);
 
+      const apiClient = await this.getAuthenticatedClient();
       await apiClient.put<ApiResponse<any>>(
         `/auth/security-questions/${questionId}`,
-        request,
-        {
-          timeout: PASSWORD_RESET_CONFIG.REQUEST_TIMEOUT,
-          headers: {
-            'Content-Type': 'application/json'
-          }
-        }
+        request
       );
     } catch (error: any) {
       throw this.handleSecurityQuestionError(error);
@@ -197,33 +224,10 @@ class SecurityQuestionsService {
 
   async removeSecurityQuestion(questionId: number): Promise<void> {
     try {
+      const apiClient = await this.getAuthenticatedClient();
       await apiClient.delete<ApiResponse<any>>(
-        `/auth/security-questions/${questionId}`,
-        {
-          timeout: PASSWORD_RESET_CONFIG.REQUEST_TIMEOUT
-        }
+        `/auth/security-questions/${questionId}`
       );
-    } catch (error: any) {
-      throw this.handleSecurityQuestionError(error);
-    }
-  }
-
-  async verifySecurityQuestion(request: VerifySecurityQuestionRequest): Promise<VerifySecurityQuestionResponse> {
-    try {
-      this.validateVerifyRequest(request);
-
-      const response = await apiClient.post<ApiResponse<VerifySecurityQuestionResponse>>(
-        '/auth/verify-security-question',
-        request,
-        {
-          timeout: PASSWORD_RESET_CONFIG.REQUEST_TIMEOUT,
-          headers: {
-            'Content-Type': 'application/json'
-          }
-        }
-      );
-
-      return response.data!;
     } catch (error: any) {
       throw this.handleSecurityQuestionError(error);
     }
@@ -231,11 +235,9 @@ class SecurityQuestionsService {
 
   async getSecurityQuestionsStats(): Promise<SecurityQuestionStats> {
     try {
+      const apiClient = await this.getAuthenticatedClient();
       const response = await apiClient.get<ApiResponse<SecurityQuestionStats>>(
-        '/auth/admin/security-questions/stats',
-        {
-          timeout: PASSWORD_RESET_CONFIG.REQUEST_TIMEOUT
-        }
+        '/auth/admin/security-questions/stats'
       );
 
       return response.data!;
@@ -244,132 +246,74 @@ class SecurityQuestionsService {
     }
   }
 
+  // ========================================
+  // VALIDACIONES
+  // ========================================
+
   private validateSetupRequest(request: SetupSecurityQuestionsRequest): void {
     if (!request.questions || !Array.isArray(request.questions)) {
-      throw new SecurityQuestionError(
-        'validation_error',
-        'Las preguntas son requeridas y deben ser un array'
-      );
+      throw new SecurityQuestionError('validation_error', 'Questions array is required');
     }
 
     if (request.questions.length === 0) {
-      throw new SecurityQuestionError(
-        'validation_error',
-        'Debe configurar al menos una pregunta de seguridad'
-      );
+      throw new SecurityQuestionError('validation_error', 'At least one question is required');
     }
 
     if (request.questions.length > 3) {
-      throw new SecurityQuestionError(
-        'max_questions_limit',
-        'No puede configurar más de 3 preguntas de seguridad'
-      );
+      throw new SecurityQuestionError('max_questions_limit', 'Maximum 3 questions allowed');
     }
 
-    request.questions.forEach((q, index) => {
-      if (!q.questionId || typeof q.questionId !== 'number') {
-        throw new SecurityQuestionError(
-          'validation_error',
-          `Pregunta ${index + 1}: ID de pregunta inválido`
-        );
+    for (const question of request.questions) {
+      if (!question.questionId || !question.answer) {
+        throw new SecurityQuestionError('validation_error', 'Each question must have questionId and answer');
       }
 
-      if (!q.answer || typeof q.answer !== 'string') {
-        throw new SecurityQuestionError(
-          'validation_error',
-          `Pregunta ${index + 1}: Respuesta es requerida`
-        );
+      if (question.answer.trim().length < 1) {
+        throw new SecurityQuestionError('answer_too_short', 'Answer must be at least 1 character');
       }
 
-      const trimmedAnswer = q.answer.trim();
-      if (trimmedAnswer.length < 2) {
-        throw new SecurityQuestionError(
-          'answer_too_short',
-          `Pregunta ${index + 1}: La respuesta debe tener al menos 2 caracteres`
-        );
+      if (question.answer.trim().length > 100) {
+        throw new SecurityQuestionError('answer_too_long', 'Answer cannot exceed 100 characters');
       }
-
-      if (trimmedAnswer.length > 100) {
-        throw new SecurityQuestionError(
-          'answer_too_long',
-          `Pregunta ${index + 1}: La respuesta no puede exceder 100 caracteres`
-        );
-      }
-    });
-
-    const questionIds = request.questions.map(q => q.questionId);
-    const uniqueIds = new Set(questionIds);
-    if (uniqueIds.size !== questionIds.length) {
-      throw new SecurityQuestionError(
-        'question_already_exists',
-        'No puede configurar la misma pregunta múltiples veces'
-      );
     }
   }
 
   private validateUpdateRequest(request: UpdateSecurityQuestionRequest): void {
     if (!request.newAnswer || typeof request.newAnswer !== 'string') {
-      throw new SecurityQuestionError(
-        'validation_error',
-        'Nueva respuesta es requerida'
-      );
+      throw new SecurityQuestionError('validation_error', 'New answer is required');
     }
 
-    const trimmedAnswer = request.newAnswer.trim();
-    if (trimmedAnswer.length < 2) {
-      throw new SecurityQuestionError(
-        'answer_too_short',
-        'La respuesta debe tener al menos 2 caracteres'
-      );
+    if (request.newAnswer.trim().length < 1) {
+      throw new SecurityQuestionError('answer_too_short', 'Answer must be at least 1 character');
     }
 
-    if (trimmedAnswer.length > 100) {
-      throw new SecurityQuestionError(
-        'answer_too_long',
-        'La respuesta no puede exceder 100 caracteres'
-      );
+    if (request.newAnswer.trim().length > 100) {
+      throw new SecurityQuestionError('answer_too_long', 'Answer cannot exceed 100 characters');
     }
   }
 
   private validateVerifyRequest(request: VerifySecurityQuestionRequest): void {
-    if (!request.email || typeof request.email !== 'string') {
-      throw new SecurityQuestionError(
-        'validation_error',
-        'Email es requerido'
-      );
+    if (!request.email || !request.questionId || !request.answer) {
+      throw new SecurityQuestionError('validation_error', 'Email, questionId and answer are required');
     }
 
-    if (!PASSWORD_RESET_CONFIG.EMAIL_PATTERN.test(request.email)) {
-      throw new SecurityQuestionError(
-        'validation_error',
-        'Solo emails @gamc.gov.bo son válidos'
-      );
+    if (!request.email.endsWith('@gamc.gov.bo')) {
+      throw new SecurityQuestionError('validation_error', 'Only @gamc.gov.bo emails are allowed');
     }
 
-    if (!request.questionId || typeof request.questionId !== 'number') {
-      throw new SecurityQuestionError(
-        'validation_error',
-        'ID de pregunta es requerido'
-      );
-    }
-
-    if (!request.answer || typeof request.answer !== 'string') {
-      throw new SecurityQuestionError(
-        'validation_error',
-        'Respuesta es requerida'
-      );
-    }
-
-    const trimmedAnswer = request.answer.trim();
-    if (trimmedAnswer.length < 1) {
-      throw new SecurityQuestionError(
-        'validation_error',
-        'La respuesta no puede estar vacía'
-      );
+    if (request.answer.trim().length < 1) {
+      throw new SecurityQuestionError('answer_too_short', 'Answer must be at least 1 character');
     }
   }
 
-  private handleSecurityQuestionError(error: any): Error {
+  // ========================================
+  // MANEJO DE ERRORES
+  // ========================================
+
+  private handleSecurityQuestionError(error: any): SecurityQuestionError {
+    console.log('🔧 Handling security question error:', error);
+
+    // Error de red/timeout
     if (!error.response) {
       return new SecurityQuestionError(
         'network_error',
@@ -378,99 +322,46 @@ class SecurityQuestionsService {
     }
 
     const { status, data } = error.response;
-
+    
     switch (status) {
       case 400:
-        if (data?.error?.includes('pregunta no encontrada')) {
-          return new SecurityQuestionError(
-            'question_not_found',
-            'La pregunta de seguridad no existe o no está disponible'
-          );
-        }
-        if (data?.error?.includes('respuesta incorrecta')) {
-          return new SecurityQuestionError(
-            'invalid_answer',
-            data.error || 'Respuesta incorrecta'
-          );
-        }
-        if (data?.error?.includes('máximo de preguntas')) {
-          return new SecurityQuestionError(
-            'max_questions_limit',
-            'Ha alcanzado el límite máximo de preguntas de seguridad'
-          );
-        }
-        if (data?.error?.includes('demasiados intentos')) {
-          return new SecurityQuestionError(
-            'max_attempts_reached',
-            'Demasiados intentos fallidos. El proceso ha sido bloqueado por seguridad.'
-          );
-        }
-        break;
-
-      case 401:
         return new SecurityQuestionError(
           'validation_error',
-          'Sesión expirada. Inicie sesión nuevamente.'
+          data?.message || data?.error || 'Datos de entrada inválidos'
         );
-
+      
       case 403:
         return new SecurityQuestionError(
-          'validation_error',
-          'No tiene permisos para realizar esta acción'
+          'invalid_answer',
+          'Respuesta incorrecta'
         );
-
+      
       case 429:
         return new SecurityQuestionError(
-          'validation_error',
-          'Demasiadas solicitudes. Espere unos minutos antes de intentar nuevamente.'
+          'max_attempts_reached',
+          'Demasiados intentos. Intente más tarde'
         );
-
+      
+      case 404:
+        return new SecurityQuestionError(
+          'question_not_found',
+          'Pregunta de seguridad no encontrada'
+        );
+      
       case 500:
-      default:
         return new SecurityQuestionError(
           'network_error',
-          'Error interno del servidor. Intente nuevamente más tarde.'
+          'Error interno del servidor'
+        );
+      
+      default:
+        return new SecurityQuestionError(
+          'validation_error',
+          data?.message || data?.error || 'Error inesperado'
         );
     }
-
-    return new SecurityQuestionError(
-      'validation_error',
-      data?.message || data?.error || 'Error desconocido en preguntas de seguridad'
-    );
-  }
-
-  normalizeAnswer(answer: string): string {
-    return answer.trim().toLowerCase();
-  }
-
-  getAvailableCategories(): Array<{ id: string; name: string; description: string }> {
-    return [
-      {
-        id: 'personal',
-        name: 'Personal',
-        description: 'Información personal y familiar'
-      },
-      {
-        id: 'education',
-        name: 'Educación',
-        description: 'Información sobre estudios y formación'
-      },
-      {
-        id: 'professional',
-        name: 'Profesional',
-        description: 'Información sobre trabajo en el GAMC'
-      },
-      {
-        id: 'preferences',
-        name: 'Preferencias',
-        description: 'Gustos personales y preferencias'
-      }
-    ];
-  }
-
-  isQuestionInCategory(question: SecurityQuestion, category: string): boolean {
-    return question.category === category;
   }
 }
 
+// Exportar instancia singleton
 export const securityQuestionsService = new SecurityQuestionsService();
