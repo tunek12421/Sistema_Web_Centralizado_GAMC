@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
 
 // MessageType representa un tipo de mensaje
@@ -31,20 +32,10 @@ type MessageStatus struct {
 	CreatedAt   time.Time `json:"createdAt"`
 }
 
-// TableName especifica el nombre de la tabla para MessageType
-func (MessageType) TableName() string {
-	return "message_types"
-}
-
-// TableName especifica el nombre de la tabla para MessageStatus
-func (MessageStatus) TableName() string {
-	return "message_statuses"
-}
-
-// Message representa un mensaje en el sistema
+// Message representa un mensaje del sistema
 type Message struct {
 	ID             int64      `json:"id" gorm:"primaryKey;autoIncrement"`
-	Subject        string     `json:"subject" gorm:"not null;index"`
+	Subject        string     `json:"subject" gorm:"size:255;not null"`
 	Content        string     `json:"content" gorm:"type:text;not null"`
 	SenderID       uuid.UUID  `json:"senderId" gorm:"type:uuid;not null;index"`
 	SenderUnitID   int        `json:"senderUnitId" gorm:"not null;index"`
@@ -68,45 +59,45 @@ type Message struct {
 	Attachments  []MessageAttachment `json:"attachments,omitempty" gorm:"foreignKey:MessageID"`
 }
 
-// TableName especifica el nombre de la tabla
-func (Message) TableName() string {
-	return "messages"
+// MessageAttachment representa un archivo adjunto
+type MessageAttachment struct {
+	ID           uuid.UUID `json:"id" gorm:"type:uuid;primary_key;default:gen_random_uuid()"`
+	MessageID    int64     `json:"messageId" gorm:"not null;index"`
+	OriginalName string    `json:"originalName" gorm:"size:255;not null"`
+	FileName     string    `json:"fileName" gorm:"size:255;not null"`
+	FilePath     string    `json:"filePath" gorm:"size:500;not null"`
+	FileSize     int64     `json:"fileSize" gorm:"not null"`
+	MimeType     *string   `json:"mimeType,omitempty" gorm:"size:100"`
+	UploadedBy   uuid.UUID `json:"uploadedBy" gorm:"type:uuid;not null;index"`
+	CreatedAt    time.Time `json:"createdAt"`
+
+	// Relaciones
+	Message  *Message `json:"message,omitempty" gorm:"foreignKey:MessageID"`
+	Uploader *User    `json:"uploader,omitempty" gorm:"foreignKey:UploadedBy"`
 }
 
-// IsRead verifica si el mensaje ha sido leído
-func (m *Message) IsRead() bool {
-	return m.ReadAt != nil
+// BeforeCreate hook para MessageAttachment
+func (ma *MessageAttachment) BeforeCreate(tx *gorm.DB) error {
+	if ma.ID == uuid.Nil {
+		ma.ID = uuid.New()
+	}
+	return nil
 }
 
-// IsResponded verifica si el mensaje ha sido respondido
-func (m *Message) IsResponded() bool {
-	return m.RespondedAt != nil
-}
+// AuditLog representa un log de auditoría
+type AuditLog struct {
+	ID         int64                  `json:"id" gorm:"primaryKey;autoIncrement"`
+	UserID     *uuid.UUID             `json:"userId,omitempty" gorm:"type:uuid;index"`
+	Action     string                 `json:"action" gorm:"size:50;not null"`
+	Resource   string                 `json:"resource" gorm:"size:100;not null"`
+	ResourceID *string                `json:"resourceId,omitempty" gorm:"size:100"`
+	OldValues  map[string]interface{} `json:"oldValues,omitempty" gorm:"type:jsonb"`
+	NewValues  map[string]interface{} `json:"newValues,omitempty" gorm:"type:jsonb"`
+	IPAddress  *string                `json:"ipAddress,omitempty" gorm:"type:inet"`
+	UserAgent  *string                `json:"userAgent,omitempty"`
+	Result     string                 `json:"result" gorm:"size:20;default:'success'"`
+	CreatedAt  time.Time              `json:"createdAt"`
 
-// IsArchived verifica si el mensaje está archivado
-func (m *Message) IsArchived() bool {
-	return m.ArchivedAt != nil
-}
-
-// MarkAsRead marca el mensaje como leído
-func (m *Message) MarkAsRead() {
-	now := time.Now()
-	m.ReadAt = &now
-}
-
-// MarkAsResponded marca el mensaje como respondido
-func (m *Message) MarkAsResponded() {
-	now := time.Now()
-	m.RespondedAt = &now
-}
-
-// Archive archiva el mensaje
-func (m *Message) Archive() {
-	now := time.Now()
-	m.ArchivedAt = &now
-}
-
-// Unarchive desarchiva el mensaje
-func (m *Message) Unarchive() {
-	m.ArchivedAt = nil
+	// Relaciones
+	User *User `json:"user,omitempty" gorm:"foreignKey:UserID"`
 }
