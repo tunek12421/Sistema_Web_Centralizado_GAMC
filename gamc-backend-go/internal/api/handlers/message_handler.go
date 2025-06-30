@@ -27,6 +27,16 @@ func NewMessageHandler(messageService *services.MessageService) *MessageHandler 
 	}
 }
 
+// messageStatusMap mapea códigos de estado a IDs
+var messageStatusMap = map[string]int{
+	"PENDING":     1,
+	"IN_PROGRESS": 2,
+	"RESPONDED":   3,
+	"RESOLVED":    4,
+	"ARCHIVED":    5,
+	"CANCELLED":   6,
+}
+
 // CreateMessage crea un nuevo mensaje
 // @Summary Crear mensaje
 // @Description Crea un nuevo mensaje entre unidades organizacionales
@@ -436,8 +446,15 @@ func (h *MessageHandler) UpdateMessageStatus(c *gin.Context) {
 		return
 	}
 
-	// Actualizar estado
-	err = h.messageService.UpdateMessageStatus(c.Request.Context(), messageID, req.Status, userProfile.ID)
+	// Convertir status string a int usando el mapa
+	statusID, exists := messageStatusMap[req.Status]
+	if !exists {
+		response.Error(c, http.StatusBadRequest, "Estado inválido", "Estados válidos: IN_PROGRESS, RESPONDED, RESOLVED, ARCHIVED, CANCELLED")
+		return
+	}
+
+	// Actualizar estado usando statusID
+	err = h.messageService.UpdateMessageStatus(c.Request.Context(), messageID, statusID, userProfile.ID)
 	if err != nil {
 		logger.Error("Error al actualizar estado: %v", err)
 		if err.Error() == "mensaje no encontrado" {
@@ -509,8 +526,9 @@ func (h *MessageHandler) DeleteMessage(c *gin.Context) {
 		return
 	}
 
-	// Cambiar estado a CANCELLED (soft delete)
-	err = h.messageService.UpdateMessageStatus(c.Request.Context(), messageID, "CANCELLED", userProfile.ID)
+	// Cambiar estado a CANCELLED (soft delete) - Convertir a int
+	cancelledStatusID := messageStatusMap["CANCELLED"]
+	err = h.messageService.UpdateMessageStatus(c.Request.Context(), messageID, cancelledStatusID, userProfile.ID)
 	if err != nil {
 		logger.Error("Error al eliminar mensaje: %v", err)
 		response.Error(c, http.StatusInternalServerError, "Error al eliminar mensaje", err.Error())
@@ -549,19 +567,19 @@ func (h *MessageHandler) GetMessageStats(c *gin.Context) {
 	}
 
 	// Determinar unidad para estadísticas
-	var unitID *int
+	var unitID int
 	if unitIDStr := c.Query("unitId"); unitIDStr != "" && userProfile.Role == "admin" {
 		if parsedUnitID, err := strconv.Atoi(unitIDStr); err == nil {
-			unitID = &parsedUnitID
+			unitID = parsedUnitID
 		}
 	} else {
 		// Para usuarios no admin, solo estadísticas de su unidad
 		if userProfile.OrganizationalUnitID != nil {
-			unitID = userProfile.OrganizationalUnitID
+			unitID = *userProfile.OrganizationalUnitID
 		}
 	}
 
-	// Obtener estadísticas
+	// Obtener estadísticas - ahora pasando int en lugar de *int
 	stats, err := h.messageService.GetMessageStats(c.Request.Context(), unitID)
 	if err != nil {
 		logger.Error("Error al obtener estadísticas: %v", err)

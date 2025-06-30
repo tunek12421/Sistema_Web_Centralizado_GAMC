@@ -63,7 +63,7 @@ type AuditLogFilter struct {
 // AuditLogResponse respuesta de log de auditoría
 type AuditLogResponse struct {
 	ID         int64                  `json:"id"`
-	User       *UserSummary           `json:"user,omitempty"`
+	User       *AuditUserSummary      `json:"user,omitempty"`
 	Action     string                 `json:"action"`
 	Resource   string                 `json:"resource"`
 	ResourceID string                 `json:"resourceId,omitempty"`
@@ -75,14 +75,6 @@ type AuditLogResponse struct {
 	ErrorMsg   string                 `json:"errorMsg,omitempty"`
 	Duration   int                    `json:"duration,omitempty"`
 	CreatedAt  time.Time              `json:"createdAt"`
-}
-
-// UserSummary resumen de usuario para logs
-type UserSummary struct {
-	ID       uuid.UUID `json:"id"`
-	Username string    `json:"username"`
-	FullName string    `json:"fullName"`
-	Email    string    `json:"email"`
 }
 
 // Log registra una acción en el log de auditoría
@@ -368,7 +360,7 @@ func (s *AuditService) convertToResponse(log *models.AuditLog) *AuditLogResponse
 
 	// Agregar información del usuario si existe
 	if log.User != nil {
-		response.User = &UserSummary{
+		response.User = &AuditUserSummary{
 			ID:       log.User.ID,
 			Username: log.User.Username,
 			FullName: fmt.Sprintf("%s %s", log.User.FirstName, log.User.LastName),
