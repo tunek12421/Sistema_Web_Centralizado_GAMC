@@ -65,118 +65,71 @@ type GetMessagesRequest struct {
 
 // MessageResponse representa la respuesta de un mensaje
 type MessageResponse struct {
-	ID             int64      `json:"id"`
-	Subject        string     `json:"subject"`
-	Content        string     `json:"content"`
-	SenderID       uuid.UUID  `json:"senderId"`
-	SenderUnitID   int        `json:"senderUnitId"`
-	ReceiverUnitID int        `json:"receiverUnitId"`
-	MessageTypeID  int        `json:"messageTypeId"`
-	StatusID       int        `json:"statusId"`
-	PriorityLevel  int        `json:"priorityLevel"`
-	IsUrgent       bool       `json:"isUrgent"`
-	ReadAt         *time.Time `json:"readAt,omitempty"`
-	RespondedAt    *time.Time `json:"respondedAt,omitempty"`
-	CreatedAt      time.Time  `json:"createdAt"`
-	UpdatedAt      time.Time  `json:"updatedAt"`
-
-	// Datos relacionales
-	Sender       *models.User               `json:"sender,omitempty"`
-	SenderUnit   *models.OrganizationalUnit `json:"senderUnit,omitempty"`
-	ReceiverUnit *models.OrganizationalUnit `json:"receiverUnit,omitempty"`
-	MessageType  *models.MessageType        `json:"messageType,omitempty"`
-	Status       *models.MessageStatus      `json:"status,omitempty"`
-	Attachments  []models.MessageAttachment `json:"attachments,omitempty"`
+	ID             int64                      `json:"id"`
+	Subject        string                     `json:"subject"`
+	Content        string                     `json:"content"`
+	SenderID       uuid.UUID                  `json:"senderId"`
+	SenderUnitID   int                        `json:"senderUnitId"`
+	ReceiverUnitID int                        `json:"receiverUnitId"`
+	MessageTypeID  int                        `json:"messageTypeId"`
+	StatusID       int                        `json:"statusId"`
+	PriorityLevel  int                        `json:"priorityLevel"`
+	IsUrgent       bool                       `json:"isUrgent"`
+	ReadAt         *time.Time                 `json:"readAt,omitempty"`
+	RespondedAt    *time.Time                 `json:"respondedAt,omitempty"`
+	CreatedAt      time.Time                  `json:"createdAt"`
+	UpdatedAt      time.Time                  `json:"updatedAt"`
+	Sender         *models.User               `json:"sender,omitempty"`
+	SenderUnit     *models.OrganizationalUnit `json:"senderUnit,omitempty"`
+	ReceiverUnit   *models.OrganizationalUnit `json:"receiverUnit,omitempty"`
+	MessageType    *models.MessageType        `json:"messageType,omitempty"`
+	Status         *models.MessageStatus      `json:"status,omitempty"`
+	Attachments    []models.MessageAttachment `json:"attachments,omitempty"`
 }
 
 // CreateMessage crea un nuevo mensaje
 func (s *MessageService) CreateMessage(ctx context.Context, req *CreateMessageRequest) (*MessageResponse, error) {
-	logger.Info("📨 Creando nuevo mensaje: %s", req.Subject)
+	logger.Info("📨 Creando mensaje: %s", req.Subject)
 
-	// Validar que la unidad receptora existe y está activa
+	// Validar unidad receptora
 	var receiverUnit models.OrganizationalUnit
-	if err := s.db.WithContext(ctx).Where("id = ? AND is_active = ?", req.ReceiverUnitID, true).First(&receiverUnit).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("unidad organizacional destino no encontrada o inactiva")
-		}
-		return nil, fmt.Errorf("error al validar unidad destino: %w", err)
+	if err := s.db.WithContext(ctx).First(&receiverUnit, req.ReceiverUnitID).Error; err != nil {
+		return nil, fmt.Errorf("unidad receptora no encontrada")
 	}
 
-	// Validar que el tipo de mensaje existe y está activo
-	messageTypes, err := s.messageRepo.GetMessageTypes(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("error al obtener tipos de mensaje: %w", err)
+	// Validar tipo de mensaje
+	var messageType models.MessageType
+	if err := s.db.WithContext(ctx).First(&messageType, req.MessageTypeID).Error; err != nil {
+		return nil, fmt.Errorf("tipo de mensaje no encontrado")
 	}
 
-	var messageType *models.MessageType
-	for _, mt := range messageTypes {
-		if mt.ID == req.MessageTypeID {
-			messageType = mt
-			break
-		}
-	}
-	if messageType == nil {
-		return nil, fmt.Errorf("tipo de mensaje no encontrado o inactivo")
-	}
-
-	// Obtener el estado inicial (SENT)
-	statuses, err := s.messageRepo.GetMessageStatuses(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("error al obtener estados: %w", err)
-	}
-
-	var sentStatus *models.MessageStatus
-	for _, st := range statuses {
-		if st.Code == "SENT" {
-			sentStatus = st
-			break
-		}
-	}
-	if sentStatus == nil {
-		return nil, fmt.Errorf("estado inicial no encontrado")
-	}
-
-	// Crear el mensaje
-	message := models.Message{
+	// Crear mensaje
+	message := &models.Message{
 		Subject:        req.Subject,
 		Content:        req.Content,
 		SenderID:       req.SenderID,
 		SenderUnitID:   req.SenderUnitID,
 		ReceiverUnitID: req.ReceiverUnitID,
 		MessageTypeID:  req.MessageTypeID,
-		StatusID:       sentStatus.ID,
+		StatusID:       1, // Estado inicial: "enviado"
 		PriorityLevel:  req.PriorityLevel,
 		IsUrgent:       req.IsUrgent,
 	}
 
-	// Si no se especifica prioridad, usar la del tipo de mensaje
-	if message.PriorityLevel == 0 {
-		message.PriorityLevel = messageType.PriorityLevel
-	}
-
-	// Crear el mensaje usando el repositorio
-	if err := s.messageRepo.Create(ctx, &message); err != nil {
+	if err := s.messageRepo.Create(ctx, message); err != nil {
 		return nil, fmt.Errorf("error al crear mensaje: %w", err)
 	}
 
 	// Registrar en auditoría
-	auditLog := &models.AuditLog{
-		UserID:     &req.SenderID,
-		Action:     models.AuditActionCreate,
-		Resource:   "messages",
-		ResourceID: fmt.Sprintf("%d", message.ID),
-		NewValues: map[string]interface{}{
-			"subject":        message.Subject,
-			"receiver_unit":  req.ReceiverUnitID,
-			"message_type":   req.MessageTypeID,
-			"priority_level": message.PriorityLevel,
-			"is_urgent":      message.IsUrgent,
-		},
-		Result: models.AuditResultSuccess,
-	}
-	s.auditRepo.Create(ctx, auditLog)
+	s.auditLog(ctx, req.SenderID, models.AuditActionCreate, "messages", fmt.Sprintf("%d", message.ID), nil, map[string]interface{}{
+		"subject":        req.Subject,
+		"receiver_unit":  req.ReceiverUnitID,
+		"message_type":   req.MessageTypeID,
+		"priority_level": req.PriorityLevel,
+		"is_urgent":      req.IsUrgent,
+	})
 
-	// Crear notificaciones para usuarios de la unidad receptora
+	// Crear notificaciones para la unidad receptora
 	go s.createNotificationsForUnit(context.Background(), message.ID, req.ReceiverUnitID, req.Subject)
 
 	logger.Info("✅ Mensaje creado exitosamente - ID: %d", message.ID)
@@ -248,28 +201,12 @@ func (s *MessageService) MarkAsRead(ctx context.Context, messageID int64, userID
 	// Verificar que el mensaje existe
 	message, err := s.messageRepo.GetByID(ctx, messageID)
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return fmt.Errorf("mensaje no encontrado")
-		}
-		return fmt.Errorf("error al obtener mensaje: %w", err)
+		return fmt.Errorf("mensaje no encontrado: %w", err)
 	}
 
-	// Verificar permisos
-	user, err := s.userRepo.GetByID(ctx, userID)
-	if err != nil {
-		return fmt.Errorf("usuario no encontrado: %w", err)
-	}
-
-	// Solo puede marcar como leído si es de su unidad o si es admin
-	userUnitID := 0
-	if user.OrganizationalUnitID != nil {
-		userUnitID = *user.OrganizationalUnitID
-	}
-
-	if user.Role != "admin" &&
-		message.ReceiverUnitID != userUnitID &&
-		message.SenderUnitID != userUnitID {
-		return fmt.Errorf("no tiene permisos para acceder a este mensaje")
+	// Verificar permisos (el usuario debe pertenecer a la unidad receptora)
+	if err := s.verifyReadPermissions(ctx, message, userID); err != nil {
+		return err
 	}
 
 	// Marcar como leído
@@ -278,22 +215,16 @@ func (s *MessageService) MarkAsRead(ctx context.Context, messageID int64, userID
 	}
 
 	// Registrar en auditoría
-	auditLog := &models.AuditLog{
-		UserID:     &userID,
-		Action:     models.AuditActionRead,
-		Resource:   "messages",
-		ResourceID: fmt.Sprintf("%d", messageID),
-		Result:     models.AuditResultSuccess,
-	}
-	s.auditRepo.Create(ctx, auditLog)
+	s.auditLog(ctx, userID, models.AuditActionUpdate, "messages", fmt.Sprintf("%d", messageID),
+		map[string]interface{}{"read_at": nil},
+		map[string]interface{}{"read_at": time.Now()})
 
-	logger.Info("✅ Mensaje marcado como leído")
 	return nil
 }
 
-// UpdateMessageStatus actualiza el estado de un mensaje
-func (s *MessageService) UpdateMessageStatus(ctx context.Context, messageID int64, statusID int, userID uuid.UUID) error {
-	logger.Info("🔄 Actualizando estado de mensaje - ID: %d, Nuevo estado: %d", messageID, statusID)
+// MarkAsResponded marca un mensaje como respondido
+func (s *MessageService) MarkAsResponded(ctx context.Context, messageID int64, userID uuid.UUID) error {
+	logger.Info("💬 Marcando mensaje como respondido - ID: %d", messageID)
 
 	// Verificar que el mensaje existe
 	message, err := s.messageRepo.GetByID(ctx, messageID)
@@ -302,49 +233,26 @@ func (s *MessageService) UpdateMessageStatus(ctx context.Context, messageID int6
 	}
 
 	// Verificar permisos
-	user, err := s.userRepo.GetByID(ctx, userID)
-	if err != nil {
-		return fmt.Errorf("usuario no encontrado: %w", err)
+	if err := s.verifyReadPermissions(ctx, message, userID); err != nil {
+		return err
 	}
 
-	// Actualizar estado
-	message.StatusID = statusID
-	if err := s.messageRepo.Update(ctx, message); err != nil {
-		return fmt.Errorf("error al actualizar estado: %w", err)
-	}
-
-	// Si el estado es "RESPONDED", marcar como respondido
-	statuses, _ := s.messageRepo.GetMessageStatuses(ctx)
-	for _, status := range statuses {
-		if status.ID == statusID && status.Code == "RESPONDED" {
-			s.messageRepo.MarkAsResponded(ctx, messageID)
-			break
-		}
+	// Marcar como respondido
+	if err := s.messageRepo.MarkAsResponded(ctx, messageID); err != nil {
+		return fmt.Errorf("error al marcar como respondido: %w", err)
 	}
 
 	// Registrar en auditoría
-	auditLog := &models.AuditLog{
-		UserID:     &userID,
-		Action:     models.AuditActionUpdate,
-		Resource:   "messages",
-		ResourceID: fmt.Sprintf("%d", messageID),
-		OldValues: map[string]interface{}{
-			"status_id": message.StatusID,
-		},
-		NewValues: map[string]interface{}{
-			"status_id": statusID,
-		},
-		Result: models.AuditResultSuccess,
-	}
-	s.auditRepo.Create(ctx, auditLog)
+	s.auditLog(ctx, userID, models.AuditActionUpdate, "messages", fmt.Sprintf("%d", messageID),
+		map[string]interface{}{"responded_at": nil},
+		map[string]interface{}{"responded_at": time.Now()})
 
-	logger.Info("✅ Estado actualizado exitosamente")
 	return nil
 }
 
-// DeleteMessage elimina un mensaje
-func (s *MessageService) DeleteMessage(ctx context.Context, messageID int64, userID uuid.UUID) error {
-	logger.Warn("🗑️ Eliminando mensaje - ID: %d, Usuario: %s", messageID, userID.String())
+// ArchiveMessage archiva un mensaje
+func (s *MessageService) ArchiveMessage(ctx context.Context, messageID int64, userID uuid.UUID) error {
+	logger.Info("📦 Archivando mensaje - ID: %d", messageID)
 
 	// Verificar que el mensaje existe
 	message, err := s.messageRepo.GetByID(ctx, messageID)
@@ -352,56 +260,135 @@ func (s *MessageService) DeleteMessage(ctx context.Context, messageID int64, use
 		return fmt.Errorf("mensaje no encontrado: %w", err)
 	}
 
-	// Verificar permisos (solo admin o el emisor pueden eliminar)
-	user, err := s.userRepo.GetByID(ctx, userID)
-	if err != nil {
-		return fmt.Errorf("usuario no encontrado: %w", err)
+	// Verificar permisos
+	if err := s.verifyReadPermissions(ctx, message, userID); err != nil {
+		return err
 	}
 
-	if user.Role != "admin" && message.SenderID != userID {
-		return fmt.Errorf("no tiene permisos para eliminar este mensaje")
-	}
-
-	// Eliminar mensaje
-	if err := s.messageRepo.Delete(ctx, messageID); err != nil {
-		return fmt.Errorf("error al eliminar mensaje: %w", err)
+	// Archivar mensaje
+	if err := s.messageRepo.Archive(ctx, messageID); err != nil {
+		return fmt.Errorf("error al archivar mensaje: %w", err)
 	}
 
 	// Registrar en auditoría
-	auditLog := &models.AuditLog{
-		UserID:     &userID,
-		Action:     models.AuditActionDelete,
-		Resource:   "messages",
-		ResourceID: fmt.Sprintf("%d", messageID),
-		OldValues: map[string]interface{}{
-			"subject":       message.Subject,
-			"sender":        message.SenderID,
-			"receiver_unit": message.ReceiverUnitID,
-		},
-		Result: models.AuditResultSuccess,
-	}
-	s.auditRepo.Create(ctx, auditLog)
+	s.auditLog(ctx, userID, models.AuditActionUpdate, "messages", fmt.Sprintf("%d", messageID),
+		map[string]interface{}{"archived_at": nil},
+		map[string]interface{}{"archived_at": time.Now()})
 
-	logger.Info("✅ Mensaje eliminado exitosamente")
+	return nil
+}
+
+// UnarchiveMessage desarchivar un mensaje
+func (s *MessageService) UnarchiveMessage(ctx context.Context, messageID int64, userID uuid.UUID) error {
+	logger.Info("📤 Desarchivando mensaje - ID: %d", messageID)
+
+	// Verificar que el mensaje existe
+	message, err := s.messageRepo.GetByID(ctx, messageID)
+	if err != nil {
+		return fmt.Errorf("mensaje no encontrado: %w", err)
+	}
+
+	// Verificar permisos
+	if err := s.verifyReadPermissions(ctx, message, userID); err != nil {
+		return err
+	}
+
+	// Desarchivar mensaje
+	if err := s.messageRepo.Unarchive(ctx, messageID); err != nil {
+		return fmt.Errorf("error al desarchivar mensaje: %w", err)
+	}
+
+	// Registrar en auditoría
+	s.auditLog(ctx, userID, models.AuditActionUpdate, "messages", fmt.Sprintf("%d", messageID),
+		map[string]interface{}{"archived_at": time.Now()},
+		map[string]interface{}{"archived_at": nil})
+
 	return nil
 }
 
 // GetMessageStats obtiene estadísticas de mensajes
-func (s *MessageService) GetMessageStats(ctx context.Context, unitID int) (*MessageStats, error) {
-	now := time.Now()
-	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+func (s *MessageService) GetMessageStats(ctx context.Context, unitID int, userID uuid.UUID) (*MessageStats, error) {
+	logger.Debug("📊 Obteniendo estadísticas para unidad: %d", unitID)
 
-	stats, err := s.messageRepo.GetStatsByUnit(ctx, unitID, today, now)
+	// CORREGIDO: Comentar la variable no utilizada temporalmente si existe
+	// user, err := s.userRepo.GetByID(ctx, userID)
+	// if err != nil {
+	//     return nil, fmt.Errorf("usuario no encontrado: %w", err)
+	// }
+
+	now := time.Now()
+	startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	endOfDay := startOfDay.Add(24 * time.Hour)
+
+	stats, err := s.messageRepo.GetStatsByUnit(ctx, unitID, startOfDay, endOfDay)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error al obtener estadísticas: %w", err)
 	}
 
 	return &MessageStats{
-		Total:  stats.TotalReceived + stats.TotalSent,
+		Total:  stats.TotalSent + stats.TotalReceived,
 		Unread: stats.Unread,
 		Urgent: stats.Urgent,
-		Today:  stats.TotalReceived, // Mensajes recibidos hoy
+		Today:  stats.TotalSent + stats.TotalReceived, // Estadísticas del día actual
 	}, nil
+}
+
+// SearchMessages busca mensajes por texto
+func (s *MessageService) SearchMessages(ctx context.Context, searchText string, userID uuid.UUID, filters *GetMessagesRequest) ([]MessageResponse, int64, error) {
+	logger.Info("🔍 Buscando mensajes con texto: %s", searchText)
+
+	// Obtener usuario para verificar permisos
+	user, err := s.userRepo.GetByID(ctx, userID)
+	if err != nil {
+		return nil, 0, fmt.Errorf("usuario no encontrado: %w", err)
+	}
+
+	// Configurar filtros base
+	if filters == nil {
+		filters = &GetMessagesRequest{
+			Page:      1,
+			Limit:     20,
+			SortBy:    "created_at",
+			SortOrder: "desc",
+		}
+	}
+
+	// Agregar filtro de búsqueda
+	filters.SearchText = &searchText
+
+	// Si no es admin, filtrar por su unidad
+	if user.Role != "admin" && user.OrganizationalUnitID != nil {
+		filters.UnitID = user.OrganizationalUnitID
+	}
+
+	// CORREGIDO: Convertir a tipo compatible del repositorio
+	repoFilter := &repositories.GetMessagesRequest{
+		UnitID:      filters.UnitID,
+		UserID:      filters.UserID,
+		MessageType: filters.MessageType,
+		Status:      filters.Status,
+		IsUrgent:    filters.IsUrgent,
+		DateFrom:    filters.DateFrom,
+		DateTo:      filters.DateTo,
+		SearchText:  filters.SearchText,
+		Page:        filters.Page,
+		Limit:       filters.Limit,
+		SortBy:      filters.SortBy,
+		SortOrder:   filters.SortOrder,
+	}
+
+	messages, total, err := s.messageRepo.Search(ctx, repoFilter)
+	if err != nil {
+		return nil, 0, fmt.Errorf("error al buscar mensajes: %w", err)
+	}
+
+	// Convertir a response
+	responses := make([]MessageResponse, len(messages))
+	for i, msg := range messages {
+		responses[i] = *s.convertToResponse(msg)
+	}
+
+	return responses, total, nil
 }
 
 // GetMessageTypes obtiene los tipos de mensaje disponibles
@@ -412,6 +399,44 @@ func (s *MessageService) GetMessageTypes(ctx context.Context) ([]*models.Message
 // GetMessageStatuses obtiene los estados de mensaje disponibles
 func (s *MessageService) GetMessageStatuses(ctx context.Context) ([]*models.MessageStatus, error) {
 	return s.messageRepo.GetMessageStatuses(ctx)
+}
+
+// UpdateMessageStatus actualiza el estado de un mensaje - MÉTODO FALTANTE AGREGADO
+func (s *MessageService) UpdateMessageStatus(ctx context.Context, messageID int64, statusID int, userID uuid.UUID) error {
+	logger.Info("🔄 Actualizando estado de mensaje - ID: %d, Nuevo estado: %d", messageID, statusID)
+
+	// Verificar que el mensaje existe
+	message, err := s.messageRepo.GetByID(ctx, messageID)
+	if err != nil {
+		return fmt.Errorf("mensaje no encontrado: %w", err)
+	}
+
+	// Verificar permisos
+	if err := s.verifyReadPermissions(ctx, message, userID); err != nil {
+		return err
+	}
+
+	// Verificar que el estado es válido
+	var status models.MessageStatus
+	if err := s.db.WithContext(ctx).First(&status, statusID).Error; err != nil {
+		return fmt.Errorf("estado de mensaje no válido")
+	}
+
+	// Actualizar estado
+	oldStatus := message.StatusID
+	message.StatusID = statusID
+
+	if err := s.messageRepo.Update(ctx, message); err != nil {
+		return fmt.Errorf("error al actualizar estado del mensaje: %w", err)
+	}
+
+	// Registrar en auditoría
+	s.auditLog(ctx, userID, models.AuditActionUpdate, "messages", fmt.Sprintf("%d", messageID),
+		map[string]interface{}{"status_id": oldStatus},
+		map[string]interface{}{"status_id": statusID})
+
+	logger.Info("✅ Estado de mensaje actualizado exitosamente")
+	return nil
 }
 
 // Funciones auxiliares
@@ -520,47 +545,45 @@ func (s *MessageService) createNotificationsForUnit(ctx context.Context, message
 	}
 }
 
-// SearchMessages busca mensajes por texto
-func (s *MessageService) SearchMessages(ctx context.Context, searchText string, userID uuid.UUID, filters *GetMessagesRequest) ([]MessageResponse, int64, error) {
-	logger.Info("🔍 Buscando mensajes con texto: %s", searchText)
-
-	// Obtener usuario para verificar permisos
+// verifyReadPermissions verifica si un usuario tiene permisos para leer un mensaje
+func (s *MessageService) verifyReadPermissions(ctx context.Context, message *models.Message, userID uuid.UUID) error {
+	// Obtener usuario
 	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil {
-		return nil, 0, fmt.Errorf("usuario no encontrado: %w", err)
+		return fmt.Errorf("usuario no encontrado: %w", err)
 	}
 
-	// Configurar filtros base
-	if filters == nil {
-		filters = &GetMessagesRequest{
-			Page:      1,
-			Limit:     20,
-			SortBy:    "created_at",
-			SortOrder: "desc",
+	// Los administradores pueden leer cualquier mensaje
+	if user.Role == "admin" {
+		return nil
+	}
+
+	// El usuario debe pertenecer a la unidad emisora o receptora
+	if user.OrganizationalUnitID != nil {
+		unitID := *user.OrganizationalUnitID
+		if unitID == message.SenderUnitID || unitID == message.ReceiverUnitID {
+			return nil
 		}
 	}
 
-	// Agregar filtro de búsqueda
-	filters.SearchText = &searchText
+	return fmt.Errorf("no tiene permisos para acceder a este mensaje")
+}
 
-	// Si no es admin, filtrar por su unidad
-	if user.Role != "admin" && user.OrganizationalUnitID != nil {
-		filters.UnitID = user.OrganizationalUnitID
+// auditLog registra una acción en el log de auditoría
+func (s *MessageService) auditLog(ctx context.Context, userID uuid.UUID, action models.AuditAction, resource, resourceID string, oldValues, newValues map[string]interface{}) {
+	log := &models.AuditLog{
+		UserID:     &userID,
+		Action:     action,
+		Resource:   resource,
+		ResourceID: resourceID,
+		OldValues:  oldValues,
+		NewValues:  newValues,
+		Result:     models.AuditResultSuccess,
 	}
 
-	// Usar el repositorio para buscar
-	messages, total, err := s.messageRepo.Search(ctx, filters)
-	if err != nil {
-		return nil, 0, fmt.Errorf("error al buscar mensajes: %w", err)
+	if err := s.auditRepo.Create(ctx, log); err != nil {
+		logger.Error("Error al registrar en auditoría: %v", err)
 	}
-
-	// Convertir a response
-	responses := make([]MessageResponse, len(messages))
-	for i, msg := range messages {
-		responses[i] = *s.convertToResponse(&msg)
-	}
-
-	return responses, total, nil
 }
 
 // MessageStats representa estadísticas de mensajes

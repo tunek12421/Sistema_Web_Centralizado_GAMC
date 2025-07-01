@@ -2,6 +2,7 @@
 package models
 
 import (
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -30,6 +31,10 @@ const (
 	FileCategorySpreadsheet  FileCategory = "spreadsheet"
 	FileCategoryPresentation FileCategory = "presentation"
 	FileCategoryArchive      FileCategory = "archive"
+	FileCategoryReport       FileCategory = "report"
+	FileCategoryAttachment   FileCategory = "attachment"
+	FileCategoryTemp         FileCategory = "temp"
+	FileCategoryBackup       FileCategory = "backup"
 	FileCategoryOther        FileCategory = "other"
 )
 
@@ -39,12 +44,15 @@ type FileMetadata struct {
 	BucketName      string                 `json:"bucketName" gorm:"size:100;not null;index"`
 	ObjectName      string                 `json:"objectName" gorm:"size:255;not null"`
 	OriginalName    string                 `json:"originalName" gorm:"size:255;not null"`
+	StoredName      string                 `json:"storedName" gorm:"size:255;not null"`
+	FilePath        string                 `json:"filePath" gorm:"size:500;not null"`
 	FileSize        int64                  `json:"fileSize" gorm:"not null"`
 	MimeType        string                 `json:"mimeType" gorm:"size:100"`
 	Category        FileCategory           `json:"category" gorm:"type:varchar(50);not null;index"`
 	Status          FileStatus             `json:"status" gorm:"type:varchar(20);not null;default:'active';index"`
 	UploadedBy      uuid.UUID              `json:"uploadedBy" gorm:"type:uuid;not null;index"`
 	OrganizationID  int                    `json:"organizationId" gorm:"not null;index"`
+	UnitID          int                    `json:"unitId" gorm:"index"`
 	Checksum        string                 `json:"checksum" gorm:"size:64"` // SHA256
 	ContentType     string                 `json:"contentType" gorm:"size:100"`
 	Tags            []string               `json:"tags,omitempty" gorm:"type:text[]"`
@@ -59,9 +67,7 @@ type FileMetadata struct {
 	CreatedAt       time.Time              `json:"createdAt"`
 	UpdatedAt       time.Time              `json:"updatedAt"`
 	DeletedAt       gorm.DeletedAt         `json:"deletedAt,omitempty" gorm:"index"`
-	StoredName      string                 `json:"storedName" gorm:"size:255;not null"`
-	FilePath        string                 `json:"filePath" gorm:"size:500;not null"`
-	UnitID          int                    `json:"unitId" gorm:"index"`
+
 	// Relaciones
 	Uploader     *User               `json:"uploader,omitempty" gorm:"foreignKey:UploadedBy"`
 	Organization *OrganizationalUnit `json:"organization,omitempty" gorm:"foreignKey:OrganizationID"`
@@ -83,11 +89,22 @@ func (f *FileMetadata) BeforeCreate(tx *gorm.DB) error {
 	if f.Category == "" {
 		f.Category = f.DetermineCategory()
 	}
+	// Establecer StoredName si no está definido
+	if f.StoredName == "" {
+		f.StoredName = f.OriginalName
+	}
+	// Establecer ObjectName si no está definido
+	if f.ObjectName == "" {
+		f.ObjectName = f.StoredName
+	}
 	return nil
 }
 
 // DetermineCategory determina la categoría basada en el tipo MIME
 func (f *FileMetadata) DetermineCategory() FileCategory {
+	mimeType := strings.ToLower(f.MimeType)
+
+	// Mapeo de prefijos MIME a categorías
 	mimeCategories := map[string]FileCategory{
 		"image/":             FileCategoryImage,
 		"video/":             FileCategoryVideo,
@@ -102,10 +119,12 @@ func (f *FileMetadata) DetermineCategory() FileCategory {
 		"application/zip":   FileCategoryArchive,
 		"application/x-rar": FileCategoryArchive,
 		"application/x-7z":  FileCategoryArchive,
+		"text/csv":          FileCategorySpreadsheet,
 	}
 
+	// Verificar prefijos primero
 	for prefix, category := range mimeCategories {
-		if len(f.MimeType) >= len(prefix) && f.MimeType[:len(prefix)] == prefix {
+		if strings.HasPrefix(mimeType, prefix) {
 			return category
 		}
 	}
@@ -141,7 +160,57 @@ func (f *FileMetadata) IsExpired() bool {
 
 // GetFullPath retorna la ruta completa del archivo en MinIO
 func (f *FileMetadata) GetFullPath() string {
+	if f.BucketName == "" || f.ObjectName == "" {
+		return f.FilePath
+	}
 	return f.BucketName + "/" + f.ObjectName
+}
+
+// GetUnitID retorna el ID de la unidad organizacional
+func (f *FileMetadata) GetUnitID() int {
+	if f.UnitID != 0 {
+		return f.UnitID
+	}
+	return f.OrganizationID
+}
+
+// SetUnitID establece el ID de la unidad organizacional
+func (f *FileMetadata) SetUnitID(unitID int) {
+	f.UnitID = unitID
+	if f.OrganizationID == 0 {
+		f.OrganizationID = unitID
+	}
+}
+
+// ConvertMetadataToString convierte el metadata de interface{} a string para compatibilidad
+func (f *FileMetadata) ConvertMetadataToString() map[string]string {
+	if f.Metadata == nil {
+		return nil
+	}
+
+	result := make(map[string]string)
+	for k, v := range f.Metadata {
+		if str, ok := v.(string); ok {
+			result[k] = str
+		} else {
+			// Convertir a string si no es string
+			result[k] = strings.TrimSpace(string(rune(0))) // Placeholder, ajustar según necesidad
+		}
+	}
+	return result
+}
+
+// SetMetadataFromString establece metadata desde un map[string]string
+func (f *FileMetadata) SetMetadataFromString(metadata map[string]string) {
+	if metadata == nil {
+		f.Metadata = nil
+		return
+	}
+
+	f.Metadata = make(map[string]interface{})
+	for k, v := range metadata {
+		f.Metadata[k] = v
+	}
 }
 
 // FileAccessLog registro de accesos a archivos
@@ -162,12 +231,4 @@ type FileAccessLog struct {
 // TableName especifica el nombre de la tabla
 func (FileAccessLog) TableName() string {
 	return "file_access_logs"
-}
-
-func (f *FileMetadata) GetUnitID() int {
-	return f.OrganizationID
-}
-
-func (f *FileMetadata) SetUnitID(unitID int) {
-	f.OrganizationID = unitID
 }

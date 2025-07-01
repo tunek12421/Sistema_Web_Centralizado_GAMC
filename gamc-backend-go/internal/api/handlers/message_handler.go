@@ -580,7 +580,7 @@ func (h *MessageHandler) GetMessageStats(c *gin.Context) {
 	}
 
 	// Obtener estadísticas - ahora pasando int en lugar de *int
-	stats, err := h.messageService.GetMessageStats(c.Request.Context(), unitID)
+	stats, err := h.messageService.GetMessageStats(c.Request.Context(), unitID, userProfile.ID)
 	if err != nil {
 		logger.Error("Error al obtener estadísticas: %v", err)
 		response.Error(c, http.StatusInternalServerError, "Error al obtener estadísticas", err.Error())

@@ -68,7 +68,7 @@ type ReportResponse struct {
 	FileSize            int64             `json:"fileSize,omitempty"`
 	RecordCount         int64             `json:"recordCount,omitempty"`
 	ProcessingTime      int               `json:"processingTime,omitempty"`
-	GeneratedAt         time.Time         `json:"generatedAt"`
+	GeneratedAt         *time.Time        `json:"generatedAt,omitempty"` // CORREGIDO: *time.Time en lugar de time.Time
 	GenerationStarted   *time.Time        `json:"generationStarted,omitempty"`
 	GenerationCompleted *time.Time        `json:"generationCompleted,omitempty"`
 	ScheduledFor        *time.Time        `json:"scheduledFor,omitempty"`
@@ -126,7 +126,7 @@ func (s *ReportService) GenerateReport(ctx context.Context, req *GenerateReportR
 		Format:              req.Format,
 		RequestedBy:         req.UserID,
 		OrganizationID:      req.UnitID,
-		TemplateID:          &template.ID,
+		TemplateID:          template.ID, // CORREGIDO: template.ID en lugar de &template.ID
 		Parameters:          req.Parameters,
 		ScheduledFor:        req.ScheduledFor,
 		GenerationTimeoutMs: 300000, // 5 minutos por defecto
@@ -237,15 +237,17 @@ func (s *ReportService) saveReportFile(ctx context.Context, report *models.Repor
 		BucketName:   config.GetMinIOBuckets().Reports,
 		FileSize:     int64(len(content)),
 		MimeType:     s.getMimeType(report.Format),
-		Category:     "report",
+		Category:     models.FileCategoryReport, // CORREGIDO: usar el enum en lugar de string
 		UploadedBy:   report.RequestedBy,
 		UnitID:       report.OrganizationID,
-		Metadata: map[string]string{
-			"report_id":   report.ID.String(),
-			"report_type": string(report.Type),
-			"format":      string(report.Format),
-		},
 	}
+
+	// CORREGIDO: Convertir map[string]string a map[string]interface{}
+	metadata.SetMetadataFromString(map[string]string{
+		"report_id":   report.ID.String(),
+		"report_type": string(report.Type),
+		"format":      string(report.Format),
+	})
 
 	// TODO: Implementar la subida real a MinIO
 	// Por ahora, solo creamos el registro
@@ -338,15 +340,18 @@ func (s *ReportService) CancelReport(ctx context.Context, reportID, userID uuid.
 		return fmt.Errorf("el reporte no se puede cancelar en su estado actual")
 	}
 
+	// CORREGIDO: Crear variable local para la constante
+	cancelledStatus := models.ReportStatusCancelled
+
 	// Actualizar estado
-	if err := s.reportRepo.UpdateReportStatus(ctx, reportID, models.ReportStatusCancelled, "Cancelado por usuario"); err != nil {
+	if err := s.reportRepo.UpdateReportStatus(ctx, reportID, cancelledStatus, "Cancelado por usuario"); err != nil {
 		return fmt.Errorf("error al cancelar reporte: %w", err)
 	}
 
 	// Registrar en auditoría
 	s.auditLog(ctx, userID, models.AuditActionUpdate, "reports", reportID.String(),
 		map[string]interface{}{"status": report.Status},
-		map[string]interface{}{"status": models.ReportStatusCancelled})
+		map[string]interface{}{"status": cancelledStatus})
 
 	logger.Info("✅ Reporte cancelado: %s", reportID)
 	return nil
@@ -371,10 +376,13 @@ func (s *ReportService) UpdateDashboardMetric(ctx context.Context, metric *model
 func (s *ReportService) CleanupOldReports(ctx context.Context, days int) error {
 	logger.Info("🧹 Limpiando reportes antiguos (> %d días)", days)
 
+	// CORREGIDO: Usar variable local para evitar tomar dirección de constante
+	completedStatus := models.ReportStatusCompleted
+
 	// Obtener reportes a eliminar
 	filter := &repositories.ReportFilter{
 		GeneratedTo: &[]time.Time{time.Now().AddDate(0, 0, -days)}[0],
-		Status:      &models.ReportStatusCompleted,
+		Status:      &completedStatus,
 	}
 
 	reports, _, err := s.reportRepo.GetReportsByFilter(ctx, filter)
@@ -445,7 +453,7 @@ func (s *ReportService) convertReportToResponse(report *models.Report) *ReportRe
 		FileSize:            report.FileSize,
 		RecordCount:         report.RecordCount,
 		ProcessingTime:      report.ProcessingTime,
-		GeneratedAt:         report.GeneratedAt,
+		GeneratedAt:         report.GeneratedAt, // CORREGIDO: Ya es *time.Time
 		GenerationStarted:   report.GenerationStarted,
 		GenerationCompleted: report.GenerationCompleted,
 		ScheduledFor:        report.ScheduledFor,

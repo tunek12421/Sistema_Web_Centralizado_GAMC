@@ -60,8 +60,11 @@ type Report struct {
 	DateRangeStart      *time.Time             `json:"dateRangeStart,omitempty"`
 	DateRangeEnd        *time.Time             `json:"dateRangeEnd,omitempty"`
 	ScheduledAt         *time.Time             `json:"scheduledAt,omitempty"`
+	ScheduledFor        *time.Time             `json:"scheduledFor,omitempty"`
+	GeneratedAt         *time.Time             `json:"generatedAt,omitempty"`
 	GenerationStarted   *time.Time             `json:"generationStarted,omitempty"`
 	GenerationCompleted *time.Time             `json:"generationCompleted,omitempty"`
+	GenerationTimeoutMs int                    `json:"generationTimeoutMs,omitempty"`
 	FileID              *uuid.UUID             `json:"fileId,omitempty" gorm:"type:uuid"`
 	FileSize            int64                  `json:"fileSize,omitempty"`
 	RecordCount         int64                  `json:"recordCount,omitempty"`
@@ -79,6 +82,8 @@ type Report struct {
 	Requester    *User               `json:"requester,omitempty" gorm:"foreignKey:RequestedBy"`
 	Organization *OrganizationalUnit `json:"organization,omitempty" gorm:"foreignKey:OrganizationID"`
 	File         *FileMetadata       `json:"file,omitempty" gorm:"foreignKey:FileID"`
+	FileMetadata *FileMetadata       `json:"fileMetadata,omitempty" gorm:"foreignKey:FileID"`
+	Template     *ReportTemplate     `json:"template,omitempty" gorm:"foreignKey:TemplateID"`
 }
 
 // TableName especifica el nombre de la tabla
@@ -93,6 +98,10 @@ func (r *Report) BeforeCreate(tx *gorm.DB) error {
 	}
 	if r.Status == "" {
 		r.Status = ReportStatusPending
+	}
+	// Establecer timeout por defecto si no se especifica
+	if r.GenerationTimeoutMs == 0 {
+		r.GenerationTimeoutMs = 300000 // 5 minutos por defecto
 	}
 	return nil
 }
@@ -109,6 +118,7 @@ func (r *Report) StartGeneration(db *gorm.DB) error {
 func (r *Report) CompleteGeneration(db *gorm.DB, fileID uuid.UUID, fileSize int64, recordCount int64) error {
 	now := time.Now()
 	r.GenerationCompleted = &now
+	r.GeneratedAt = &now
 	r.Status = ReportStatusCompleted
 	r.FileID = &fileID
 	r.FileSize = fileSize
@@ -143,6 +153,16 @@ func (r *Report) IsExpired() bool {
 	return time.Now().After(*r.ExpiresAt)
 }
 
+// IsTimedOut verifica si la generación del reporte ha superado el timeout
+func (r *Report) IsTimedOut() bool {
+	if r.GenerationStarted == nil || r.GenerationTimeoutMs == 0 {
+		return false
+	}
+	elapsed := time.Since(*r.GenerationStarted)
+	timeout := time.Duration(r.GenerationTimeoutMs) * time.Millisecond
+	return elapsed > timeout
+}
+
 // ReportTemplate define plantillas de reportes reutilizables
 type ReportTemplate struct {
 	ID               string                 `json:"id" gorm:"primaryKey;size:100"`
@@ -156,8 +176,12 @@ type ReportTemplate struct {
 	Query            string                 `json:"query,omitempty" gorm:"type:text"`
 	IsActive         bool                   `json:"isActive" gorm:"default:true"`
 	RequiredRole     string                 `json:"requiredRole,omitempty" gorm:"size:50"`
+	CreatedBy        uuid.UUID              `json:"createdBy" gorm:"type:uuid;not null;index"`
 	CreatedAt        time.Time              `json:"createdAt"`
 	UpdatedAt        time.Time              `json:"updatedAt"`
+
+	// Relaciones
+	Creator *User `json:"creator,omitempty" gorm:"foreignKey:CreatedBy"`
 }
 
 // TableName especifica el nombre de la tabla
@@ -167,30 +191,26 @@ func (ReportTemplate) TableName() string {
 
 // ReportSchedule define programación de reportes
 type ReportSchedule struct {
-	ID             uuid.UUID              `json:"id" gorm:"type:uuid;primary_key;default:gen_random_uuid()"`
-	TemplateID     string                 `json:"templateId" gorm:"size:100;not null;index"`
-	UserID         uuid.UUID              `json:"userId" gorm:"type:uuid;not null;index"`
-	OrganizationID int                    `json:"organizationId" gorm:"not null;index"`
-	Name           string                 `json:"name" gorm:"size:255;not null"`
-	CronExpression string                 `json:"cronExpression" gorm:"size:100;not null"`
-	Format         ReportFormat           `json:"format" gorm:"type:varchar(10);not null"`
-	Parameters     map[string]interface{} `json:"parameters,omitempty" gorm:"type:jsonb"`
-	IsActive       bool                   `json:"isActive" gorm:"default:true"`
-	LastRunAt      *time.Time             `json:"lastRunAt,omitempty"`
-	NextRunAt      *time.Time             `json:"nextRunAt,omitempty"`
-	Recipients     []string               `json:"recipients,omitempty" gorm:"type:text[]"`
-	CreatedAt      time.Time              `json:"createdAt"`
-	UpdatedAt      time.Time              `json:"updatedAt"`
+	ID                  uuid.UUID              `json:"id" gorm:"type:uuid;primary_key;default:gen_random_uuid()"`
+	TemplateID          string                 `json:"templateId" gorm:"size:100;not null;index"`
+	UserID              uuid.UUID              `json:"userId" gorm:"type:uuid;not null;index"`
+	OrganizationID      int                    `json:"organizationId" gorm:"not null;index"`
+	Name                string                 `json:"name" gorm:"size:255;not null"`
+	CronExpression      string                 `json:"cronExpression" gorm:"size:100;not null"`
+	Format              ReportFormat           `json:"format" gorm:"type:varchar(10);not null"`
+	Parameters          map[string]interface{} `json:"parameters,omitempty" gorm:"type:jsonb"`
+	IsActive            bool                   `json:"isActive" gorm:"default:true"`
+	LastRunAt           *time.Time             `json:"lastRunAt,omitempty"`
+	NextRunAt           *time.Time             `json:"nextRunAt,omitempty"`
+	Recipients          []string               `json:"recipients,omitempty" gorm:"type:text[]"`
+	GeneratedAt         *time.Time             `json:"generatedAt,omitempty"`
+	ScheduledFor        *time.Time             `json:"scheduledFor,omitempty"`
+	GenerationTimeoutMs int                    `json:"generationTimeoutMs,omitempty"`
+	CreatedAt           time.Time              `json:"createdAt"`
+	UpdatedAt           time.Time              `json:"updatedAt"`
 
-	// Agregar/corregir estos campos
-	GeneratedAt  *time.Time      `json:"generatedAt,omitempty"`
-	ScheduledFor *time.Time      `json:"scheduledFor,omitempty"`
-	FileMetadata *FileMetadata   `json:"fileMetadata,omitempty" gorm:"foreignKey:FileID"`
-	Template     *ReportTemplate `json:"template,omitempty" gorm:"foreignKey:TemplateID"`
-
-	// ... resto del modelo ...
 	// Relaciones
-
+	Template     *ReportTemplate     `json:"template,omitempty" gorm:"foreignKey:TemplateID"`
 	User         *User               `json:"user,omitempty" gorm:"foreignKey:UserID"`
 	Organization *OrganizationalUnit `json:"organization,omitempty" gorm:"foreignKey:OrganizationID"`
 }

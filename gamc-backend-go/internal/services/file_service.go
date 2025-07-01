@@ -94,14 +94,16 @@ func (s *FileService) UploadFile(ctx context.Context, req *UploadFileRequest) (*
 		BucketName:   uploadResult.BucketName,
 		FileSize:     uploadResult.Size,
 		MimeType:     uploadResult.ContentType,
-		Category:     string(req.Category),
+		Category:     s.convertConfigCategoryToModelCategory(req.Category), // CORREGIDO: Conversión apropiada
 		UploadedBy:   req.UserID,
 		UnitID:       req.UnitID,
 		Tags:         req.Tags,
-		Metadata:     req.Metadata,
 		Checksum:     uploadResult.ETag,
 		IsPublic:     s.isPublicCategory(req.Category),
 	}
+
+	// CORREGIDO: Usar función auxiliar para convertir metadata
+	metadata.SetMetadataFromString(req.Metadata)
 
 	if err := s.fileRepo.CreateMetadata(ctx, metadata); err != nil {
 		// Intentar eliminar archivo de MinIO si falla el registro
@@ -117,7 +119,7 @@ func (s *FileService) UploadFile(ctx context.Context, req *UploadFileRequest) (*
 			FileName:     metadata.StoredName,
 			FilePath:     metadata.FilePath,
 			FileSize:     metadata.FileSize,
-			MimeType:     &metadata.MimeType,
+			MimeType:     metadata.MimeType, // CORREGIDO: Sin & ya que es string, no *string
 			UploadedBy:   req.UserID,
 		}
 
@@ -145,11 +147,11 @@ func (s *FileService) UploadFile(ctx context.Context, req *UploadFileRequest) (*
 		FileName:     metadata.StoredName,
 		FileSize:     metadata.FileSize,
 		MimeType:     metadata.MimeType,
-		Category:     metadata.Category,
+		Category:     string(metadata.Category), // CORREGIDO: Conversión a string para response
 		DownloadURL:  downloadURL,
 		UploadedBy:   metadata.UploadedBy,
 		UploadedAt:   metadata.CreatedAt,
-		Metadata:     metadata.Metadata,
+		Metadata:     metadata.ConvertMetadataToString(), // CORREGIDO: Usar función de conversión
 	}
 
 	// Generar thumbnail si es imagen
@@ -220,11 +222,11 @@ func (s *FileService) GetFile(ctx context.Context, fileID uuid.UUID, userID uuid
 		FileName:     metadata.StoredName,
 		FileSize:     metadata.FileSize,
 		MimeType:     metadata.MimeType,
-		Category:     metadata.Category,
+		Category:     string(metadata.Category), // CORREGIDO: Conversión a string
 		DownloadURL:  downloadURL,
 		UploadedBy:   metadata.UploadedBy,
 		UploadedAt:   metadata.CreatedAt,
-		Metadata:     metadata.Metadata,
+		Metadata:     metadata.ConvertMetadataToString(), // CORREGIDO: Conversión de map
 	}
 
 	// Generar thumbnail si es imagen
@@ -263,17 +265,64 @@ func (s *FileService) DownloadFile(ctx context.Context, fileID uuid.UUID, userID
 	s.fileRepo.UpdateAccessCount(ctx, fileID)
 
 	// Registrar descarga en auditoría
-	s.auditLog(ctx, userID, models.AuditActionRead, "files", fileID.String(), nil, map[string]interface{}{
-		"action":   "download",
-		"filename": metadata.OriginalName,
-	})
+	s.auditLog(ctx, userID, models.AuditActionRead, "files", fileID.String(), nil, nil)
 
 	return reader, metadata, nil
 }
 
+// UpdateFile actualiza metadatos de un archivo
+func (s *FileService) UpdateFile(ctx context.Context, fileID uuid.UUID, req *UpdateFileRequest, userID uuid.UUID) (*FileResponse, error) {
+	// Obtener archivo actual
+	metadata, err := s.fileRepo.GetMetadataByID(ctx, fileID)
+	if err != nil {
+		return nil, fmt.Errorf("archivo no encontrado: %w", err)
+	}
+
+	// Verificar permisos
+	if !s.hasFileWriteAccess(ctx, metadata, userID) {
+		return nil, fmt.Errorf("no tiene permisos para modificar este archivo")
+	}
+
+	// Actualizar campos
+	oldValues := map[string]interface{}{
+		"description": metadata.Description,
+		"tags":        metadata.Tags,
+		"is_public":   metadata.IsPublic,
+	}
+
+	if req.Description != nil {
+		metadata.Description = *req.Description
+	}
+	if req.Tags != nil {
+		metadata.Tags = req.Tags
+	}
+	if req.IsPublic != nil {
+		metadata.IsPublic = *req.IsPublic
+	}
+	if req.ExpiresAt != nil {
+		metadata.ExpiresAt = req.ExpiresAt
+	}
+
+	// Guardar cambios
+	if err := s.fileRepo.UpdateMetadata(ctx, metadata); err != nil {
+		return nil, fmt.Errorf("error al actualizar archivo: %w", err)
+	}
+
+	// Registrar en auditoría
+	newValues := map[string]interface{}{
+		"description": metadata.Description,
+		"tags":        metadata.Tags,
+		"is_public":   metadata.IsPublic,
+	}
+	s.auditLog(ctx, userID, models.AuditActionUpdate, "files", fileID.String(), oldValues, newValues)
+
+	// Retornar respuesta actualizada
+	return s.GetFile(ctx, fileID, userID)
+}
+
 // DeleteFile elimina un archivo
 func (s *FileService) DeleteFile(ctx context.Context, fileID uuid.UUID, userID uuid.UUID) error {
-	logger.Warn("🗑️ Eliminando archivo: %s", fileID)
+	logger.Info("🗑️ Eliminando archivo: %s", fileID)
 
 	// Obtener metadatos
 	metadata, err := s.fileRepo.GetMetadataByID(ctx, fileID)
@@ -281,43 +330,32 @@ func (s *FileService) DeleteFile(ctx context.Context, fileID uuid.UUID, userID u
 		return fmt.Errorf("archivo no encontrado: %w", err)
 	}
 
-	// Verificar permisos (solo el que subió o admin puede eliminar)
-	if !s.canDeleteFile(ctx, metadata, userID) {
+	// Verificar permisos
+	if !s.hasFileWriteAccess(ctx, metadata, userID) {
 		return fmt.Errorf("no tiene permisos para eliminar este archivo")
 	}
 
 	// Eliminar de MinIO
 	if err := s.minioClient.RemoveObject(ctx, metadata.BucketName, metadata.FilePath); err != nil {
-		logger.Error("Error al eliminar archivo de MinIO: %v", err)
+		logger.Error("Error al eliminar de MinIO: %v", err)
+		// Continuar con eliminación de BD aunque falle MinIO
 	}
 
-	// Eliminar metadatos
+	// Eliminar de base de datos
 	if err := s.fileRepo.DeleteMetadata(ctx, fileID); err != nil {
-		return fmt.Errorf("error al eliminar metadatos: %w", err)
-	}
-
-	// Eliminar attachments si existen
-	if attachments, _ := s.fileRepo.GetAttachmentsByMessageID(ctx, 0); len(attachments) > 0 {
-		for _, att := range attachments {
-			if att.FilePath == metadata.FilePath {
-				s.fileRepo.DeleteAttachment(ctx, att.ID)
-			}
-		}
+		return fmt.Errorf("error al eliminar registro: %w", err)
 	}
 
 	// Registrar en auditoría
-	s.auditLog(ctx, userID, models.AuditActionDelete, "files", fileID.String(), map[string]interface{}{
-		"filename": metadata.OriginalName,
-		"size":     metadata.FileSize,
-		"category": metadata.Category,
-	}, nil)
+	s.auditLog(ctx, userID, models.AuditActionDelete, "files", fileID.String(),
+		map[string]interface{}{"filename": metadata.OriginalName}, nil)
 
-	logger.Info("✅ Archivo eliminado exitosamente")
+	logger.Info("✅ Archivo eliminado: %s", fileID)
 	return nil
 }
 
-// GetFilesByFilter obtiene archivos con filtros
-func (s *FileService) GetFilesByFilter(ctx context.Context, filter *repositories.FileFilter) ([]*FileResponse, int64, error) {
+// GetFiles obtiene archivos con filtros
+func (s *FileService) GetFiles(ctx context.Context, filter *repositories.FileFilter) ([]*FileResponse, int64, error) {
 	files, total, err := s.fileRepo.GetFilesByFilter(ctx, filter)
 	if err != nil {
 		return nil, 0, err
@@ -325,106 +363,82 @@ func (s *FileService) GetFilesByFilter(ctx context.Context, filter *repositories
 
 	responses := make([]*FileResponse, len(files))
 	for i, file := range files {
-		downloadURL, _ := s.minioClient.GetPresignedURL(ctx, file.BucketName, file.FilePath, 24*time.Hour)
-
 		responses[i] = &FileResponse{
 			ID:           file.ID,
 			OriginalName: file.OriginalName,
 			FileName:     file.StoredName,
 			FileSize:     file.FileSize,
 			MimeType:     file.MimeType,
-			Category:     file.Category,
-			DownloadURL:  downloadURL,
+			Category:     string(file.Category), // CORREGIDO: Conversión a string
 			UploadedBy:   file.UploadedBy,
 			UploadedAt:   file.CreatedAt,
-			Metadata:     file.Metadata,
-		}
-
-		if s.isImageFile(file.MimeType) {
-			responses[i].ThumbnailURL = s.generateThumbnailURL(file.BucketName, file.FilePath)
+			Metadata:     file.ConvertMetadataToString(), // CORREGIDO: Conversión de map
 		}
 	}
 
 	return responses, total, nil
 }
 
-// GetStorageStats obtiene estadísticas de almacenamiento
-func (s *FileService) GetStorageStats(ctx context.Context) (*repositories.StorageStats, error) {
-	return s.fileRepo.GetStorageStats(ctx)
-}
-
-// CleanupTempFiles limpia archivos temporales expirados
-func (s *FileService) CleanupTempFiles(ctx context.Context, expirationHours int) error {
-	logger.Info("🧹 Limpiando archivos temporales expirados")
-
-	// Obtener archivos temporales expirados
-	expiredFiles, err := s.fileRepo.GetExpiredTempFiles(ctx, expirationHours)
-	if err != nil {
-		return fmt.Errorf("error al obtener archivos expirados: %w", err)
-	}
-
-	deleted := 0
-	for _, file := range expiredFiles {
-		// Eliminar de MinIO
-		if err := s.minioClient.RemoveObject(ctx, file.BucketName, file.FilePath); err != nil {
-			logger.Error("Error al eliminar archivo temporal de MinIO: %v", err)
-			continue
-		}
-
-		// Eliminar metadatos
-		if err := s.fileRepo.DeleteMetadata(ctx, file.ID); err != nil {
-			logger.Error("Error al eliminar metadatos: %v", err)
-			continue
-		}
-
-		deleted++
-	}
-
-	logger.Info("✅ Archivos temporales eliminados: %d de %d", deleted, len(expiredFiles))
-	return nil
-}
-
 // Funciones auxiliares
 
-// hasFileAccess verifica si un usuario tiene acceso a un archivo
+// convertConfigCategoryToModelCategory convierte config.FileCategory a models.FileCategory
+func (s *FileService) convertConfigCategoryToModelCategory(configCategory config.FileCategory) models.FileCategory {
+	switch configCategory {
+	case config.FileCategoryAttachment:
+		return models.FileCategoryAttachment
+	case config.FileCategoryDocument:
+		return models.FileCategoryDocument
+	case config.FileCategoryImage:
+		return models.FileCategoryImage
+	case config.FileCategoryReport:
+		return models.FileCategoryReport
+	case config.FileCategoryTemp:
+		return models.FileCategoryTemp
+	case config.FileCategoryBackup:
+		return models.FileCategoryBackup
+	default:
+		return models.FileCategoryOther
+	}
+}
+
+// hasFileAccess verifica si un usuario tiene acceso de lectura a un archivo
 func (s *FileService) hasFileAccess(ctx context.Context, file *models.FileMetadata, userID uuid.UUID) bool {
 	// Si es público, todos tienen acceso
 	if file.IsPublic {
 		return true
 	}
 
-	// Si es el que lo subió, tiene acceso
+	// Si es quien lo subió, tiene acceso
 	if file.UploadedBy == userID {
 		return true
 	}
 
-	// Verificar si es de la misma unidad
+	// Verificar si es admin o de la misma unidad
 	var user models.User
 	if err := s.db.WithContext(ctx).Where("id = ?", userID).First(&user).Error; err != nil {
 		return false
 	}
 
-	// Admin tiene acceso a todo
 	if user.Role == "admin" {
 		return true
 	}
 
 	// Si es de la misma unidad
-	if user.OrganizationalUnitID != nil && *user.OrganizationalUnitID == file.UnitID {
+	if user.OrganizationalUnitID != nil && *user.OrganizationalUnitID == file.GetUnitID() {
 		return true
 	}
 
 	return false
 }
 
-// canDeleteFile verifica si un usuario puede eliminar un archivo
-func (s *FileService) canDeleteFile(ctx context.Context, file *models.FileMetadata, userID uuid.UUID) bool {
-	// Si es el que lo subió, puede eliminar
+// hasFileWriteAccess verifica si un usuario tiene acceso de escritura a un archivo
+func (s *FileService) hasFileWriteAccess(ctx context.Context, file *models.FileMetadata, userID uuid.UUID) bool {
+	// Si es quien lo subió, tiene acceso
 	if file.UploadedBy == userID {
 		return true
 	}
 
-	// Admin puede eliminar cualquier archivo
+	// Verificar si es admin
 	var user models.User
 	if err := s.db.WithContext(ctx).Where("id = ?", userID).First(&user).Error; err != nil {
 		return false
@@ -433,43 +447,39 @@ func (s *FileService) canDeleteFile(ctx context.Context, file *models.FileMetada
 	return user.Role == "admin"
 }
 
-// isPublicCategory determina si una categoría es pública
+// isPublicCategory verifica si una categoría debe ser pública por defecto
 func (s *FileService) isPublicCategory(category config.FileCategory) bool {
 	publicCategories := []config.FileCategory{
 		config.FileCategoryImage,
-		config.FileCategoryDocument,
-		config.FileCategoryReport,
 	}
 
-	for _, pc := range publicCategories {
-		if pc == category {
+	for _, pubCat := range publicCategories {
+		if category == pubCat {
 			return true
 		}
 	}
 	return false
 }
 
-// isImageFile verifica si es un archivo de imagen
+// isImageFile verifica si un archivo es una imagen
 func (s *FileService) isImageFile(mimeType string) bool {
-	imageMimeTypes := []string{
+	imageTypes := []string{
 		"image/jpeg", "image/jpg", "image/png", "image/gif",
 		"image/webp", "image/svg+xml", "image/bmp",
 	}
-
-	for _, imt := range imageMimeTypes {
-		if imt == mimeType {
+	for _, imgType := range imageTypes {
+		if mimeType == imgType {
 			return true
 		}
 	}
 	return false
 }
 
-// generateThumbnailURL genera URL para thumbnail
-func (s *FileService) generateThumbnailURL(bucket, objectKey string) string {
-	// Por ahora, retornamos la misma URL
-	// En el futuro, podríamos generar thumbnails reales
-	url, _ := s.minioClient.GetPresignedURL(context.Background(), bucket, objectKey, 24*time.Hour)
-	return url
+// generateThumbnailURL genera URL de thumbnail para imágenes
+func (s *FileService) generateThumbnailURL(bucketName, objectKey string) string {
+	// Implementación simplificada
+	// En producción, esto generaría thumbnails reales
+	return fmt.Sprintf("/api/v1/files/thumbnail/%s/%s", bucketName, objectKey)
 }
 
 // auditLog registra una acción en el log de auditoría
@@ -487,4 +497,12 @@ func (s *FileService) auditLog(ctx context.Context, userID uuid.UUID, action mod
 	if err := s.auditRepo.Create(ctx, log); err != nil {
 		logger.Error("Error al registrar en auditoría: %v", err)
 	}
+}
+
+// UpdateFileRequest estructura para actualizar archivo
+type UpdateFileRequest struct {
+	Description *string    `json:"description,omitempty"`
+	Tags        []string   `json:"tags,omitempty"`
+	IsPublic    *bool      `json:"isPublic,omitempty"`
+	ExpiresAt   *time.Time `json:"expiresAt,omitempty"`
 }
