@@ -182,8 +182,15 @@ type ReportSchedule struct {
 	CreatedAt      time.Time              `json:"createdAt"`
 	UpdatedAt      time.Time              `json:"updatedAt"`
 
+	// Agregar/corregir estos campos
+	GeneratedAt  *time.Time      `json:"generatedAt,omitempty"`
+	ScheduledFor *time.Time      `json:"scheduledFor,omitempty"`
+	FileMetadata *FileMetadata   `json:"fileMetadata,omitempty" gorm:"foreignKey:FileID"`
+	Template     *ReportTemplate `json:"template,omitempty" gorm:"foreignKey:TemplateID"`
+
+	// ... resto del modelo ...
 	// Relaciones
-	Template     *ReportTemplate     `json:"template,omitempty" gorm:"foreignKey:TemplateID"`
+
 	User         *User               `json:"user,omitempty" gorm:"foreignKey:UserID"`
 	Organization *OrganizationalUnit `json:"organization,omitempty" gorm:"foreignKey:OrganizationID"`
 }

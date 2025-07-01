@@ -59,7 +59,9 @@ type FileMetadata struct {
 	CreatedAt       time.Time              `json:"createdAt"`
 	UpdatedAt       time.Time              `json:"updatedAt"`
 	DeletedAt       gorm.DeletedAt         `json:"deletedAt,omitempty" gorm:"index"`
-
+	StoredName      string                 `json:"storedName" gorm:"size:255;not null"`
+	FilePath        string                 `json:"filePath" gorm:"size:500;not null"`
+	UnitID          int                    `json:"unitId" gorm:"index"`
 	// Relaciones
 	Uploader     *User               `json:"uploader,omitempty" gorm:"foreignKey:UploadedBy"`
 	Organization *OrganizationalUnit `json:"organization,omitempty" gorm:"foreignKey:OrganizationID"`
@@ -160,4 +162,12 @@ type FileAccessLog struct {
 // TableName especifica el nombre de la tabla
 func (FileAccessLog) TableName() string {
 	return "file_access_logs"
+}
+
+func (f *FileMetadata) GetUnitID() int {
+	return f.OrganizationID
+}
+
+func (f *FileMetadata) SetUnitID(unitID int) {
+	f.OrganizationID = unitID
 }

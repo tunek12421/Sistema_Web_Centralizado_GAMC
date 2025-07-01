@@ -19,6 +19,11 @@ const (
 	NotificationTypeAnnouncement NotificationType = "announcement"
 )
 
+const (
+	NotificationPriorityNormal NotificationPriority = "normal"
+	NotificationTypeSecurity   NotificationType     = "security"
+)
+
 // NotificationStatus define los estados de una notificación
 type NotificationStatus string
 
@@ -42,28 +47,31 @@ const (
 
 // Notification representa una notificación del sistema
 type Notification struct {
-	ID              uuid.UUID              `json:"id" gorm:"type:uuid;primary_key;default:gen_random_uuid()"`
-	UserID          uuid.UUID              `json:"userId" gorm:"type:uuid;not null;index"`
-	Type            NotificationType       `json:"type" gorm:"type:varchar(50);not null;index"`
-	Status          NotificationStatus     `json:"status" gorm:"type:varchar(20);not null;default:'pending';index"`
-	Priority        NotificationPriority   `json:"priority" gorm:"type:varchar(20);not null;default:'medium'"`
-	Title           string                 `json:"title" gorm:"size:255;not null"`
-	Content         string                 `json:"content" gorm:"type:text;not null"`
-	RelatedEntity   string                 `json:"relatedEntity,omitempty" gorm:"size:100"` // messages, users, etc.
-	RelatedEntityID string                 `json:"relatedEntityId,omitempty" gorm:"size:100"`
-	ActionURL       string                 `json:"actionUrl,omitempty" gorm:"size:500"`
-	IconType        string                 `json:"iconType,omitempty" gorm:"size:50"`
-	ReadAt          *time.Time             `json:"readAt,omitempty"`
-	DismissedAt     *time.Time             `json:"dismissedAt,omitempty"`
-	ScheduledFor    *time.Time             `json:"scheduledFor,omitempty"`
-	SentAt          *time.Time             `json:"sentAt,omitempty"`
-	ExpiresAt       *time.Time             `json:"expiresAt,omitempty"`
-	Metadata        map[string]interface{} `json:"metadata,omitempty" gorm:"type:jsonb"`
-	CreatedAt       time.Time              `json:"createdAt"`
-	UpdatedAt       time.Time              `json:"updatedAt"`
+	ID               uuid.UUID              `json:"id" gorm:"type:uuid;primary_key;default:gen_random_uuid()"`
+	UserID           uuid.UUID              `json:"userId" gorm:"type:uuid;not null;index"`
+	Type             NotificationType       `json:"type" gorm:"type:varchar(50);not null;index"`
+	Status           NotificationStatus     `json:"status" gorm:"type:varchar(20);not null;default:'pending';index"`
+	Priority         NotificationPriority   `json:"priority" gorm:"type:varchar(20);not null;default:'medium'"`
+	Title            string                 `json:"title" gorm:"size:255;not null"`
+	Content          string                 `json:"content" gorm:"type:text;not null"`
+	RelatedEntity    string                 `json:"relatedEntity,omitempty" gorm:"size:100"` // messages, users, etc.
+	RelatedEntityID  string                 `json:"relatedEntityId,omitempty" gorm:"size:100"`
+	ActionURL        string                 `json:"actionUrl,omitempty" gorm:"size:500"`
+	IconType         string                 `json:"iconType,omitempty" gorm:"size:50"`
+	ReadAt           *time.Time             `json:"readAt,omitempty"`
+	DismissedAt      *time.Time             `json:"dismissedAt,omitempty"`
+	ScheduledFor     *time.Time             `json:"scheduledFor,omitempty"`
+	SentAt           *time.Time             `json:"sentAt,omitempty"`
+	ExpiresAt        *time.Time             `json:"expiresAt,omitempty"`
+	Metadata         map[string]interface{} `json:"metadata,omitempty" gorm:"type:jsonb"`
+	CreatedAt        time.Time              `json:"createdAt"`
+	UpdatedAt        time.Time              `json:"updatedAt"`
+	IsRead           bool                   `json:"isRead" gorm:"default:false;index"`
+	RelatedMessageID *int64                 `json:"relatedMessageId,omitempty" gorm:"index"`
 
 	// Relaciones
-	User *User `json:"user,omitempty" gorm:"foreignKey:UserID"`
+	User           *User    `json:"user,omitempty" gorm:"foreignKey:UserID"`
+	RelatedMessage *Message `json:"relatedMessage,omitempty" gorm:"foreignKey:RelatedMessageID"`
 }
 
 // TableName especifica el nombre de la tabla

@@ -520,6 +520,49 @@ func (s *MessageService) createNotificationsForUnit(ctx context.Context, message
 	}
 }
 
+// SearchMessages busca mensajes por texto
+func (s *MessageService) SearchMessages(ctx context.Context, searchText string, userID uuid.UUID, filters *GetMessagesRequest) ([]MessageResponse, int64, error) {
+	logger.Info("🔍 Buscando mensajes con texto: %s", searchText)
+
+	// Obtener usuario para verificar permisos
+	user, err := s.userRepo.GetByID(ctx, userID)
+	if err != nil {
+		return nil, 0, fmt.Errorf("usuario no encontrado: %w", err)
+	}
+
+	// Configurar filtros base
+	if filters == nil {
+		filters = &GetMessagesRequest{
+			Page:      1,
+			Limit:     20,
+			SortBy:    "created_at",
+			SortOrder: "desc",
+		}
+	}
+
+	// Agregar filtro de búsqueda
+	filters.SearchText = &searchText
+
+	// Si no es admin, filtrar por su unidad
+	if user.Role != "admin" && user.OrganizationalUnitID != nil {
+		filters.UnitID = user.OrganizationalUnitID
+	}
+
+	// Usar el repositorio para buscar
+	messages, total, err := s.messageRepo.Search(ctx, filters)
+	if err != nil {
+		return nil, 0, fmt.Errorf("error al buscar mensajes: %w", err)
+	}
+
+	// Convertir a response
+	responses := make([]MessageResponse, len(messages))
+	for i, msg := range messages {
+		responses[i] = *s.convertToResponse(&msg)
+	}
+
+	return responses, total, nil
+}
+
 // MessageStats representa estadísticas de mensajes
 type MessageStats struct {
 	Total  int64 `json:"total"`
