@@ -6,8 +6,9 @@ import ForgotPasswordForm from './components/auth/ForgotPasswordForm';
 import SecurityQuestionForm from './components/auth/SecurityQuestionForm';
 import ResetPasswordForm from './components/auth/ResetPasswordForm';
 import PasswordResetSuccess from './components/auth/PasswordResetSuccess';
+import MessagingPage from './pages/MessagingPage'; // ✨ NUEVO IMPORT
 
-// Tipos de vistas disponibles
+// Tipos de vistas disponibles - ✨ AGREGADO 'messaging'
 type ViewType = 
   | 'home' 
   | 'login' 
@@ -16,7 +17,8 @@ type ViewType =
   | 'forgot-password'
   | 'security-question'
   | 'reset-password'
-  | 'reset-success';
+  | 'reset-success'
+  | 'messaging'; // ✨ NUEVO
 
 // Interface del usuario
 interface User {
@@ -144,35 +146,42 @@ const App: React.FC = () => {
     }
   };
 
-// CORRECCIÓN PARA App.tsx
-// Reemplazar la función handleForgotPasswordSuccess existente
+  // ✨ NUEVA FUNCIÓN - Navegar a mensajería
+  const goToMessaging = () => {
+    setCurrentView('messaging');
+  };
 
-// Manejar solicitud de reset exitosa
-const handleForgotPasswordSuccess = (email: string, requiresSecurityQuestion: boolean, securityQuestion?: any) => {
-  console.log('Reset solicitado para:', email);
-  console.log('Requiere pregunta de seguridad:', requiresSecurityQuestion);
-  console.log('Datos de pregunta:', securityQuestion);
-  
-  // Almacenar datos del proceso de reset
-  setResetProcessData({
-    email: email,
-    requiresSecurityQuestion: requiresSecurityQuestion,
-    securityQuestion: securityQuestion,
-    resetToken: undefined // Se obtendrá después de verificar la pregunta
-  });
+  // ✨ NUEVA FUNCIÓN - Volver al dashboard desde mensajería
+  const backToDashboard = () => {
+    setCurrentView('dashboard');
+  };
 
-  // Determinar el siguiente paso según la respuesta del backend
-  if (requiresSecurityQuestion && securityQuestion) {
-    // Usuario tiene preguntas de seguridad configuradas
-    console.log('→ Transitioning to security-question view');
-    setCurrentView('security-question');
-  } else {
-    // Usuario no tiene preguntas de seguridad o flujo por email
-    console.log('→ Email sent, returning to login');
-    setResetSuccessMessage(`Se han enviado instrucciones de recuperación a ${email}`);
-    setCurrentView('login');
-  }
-};
+  // Manejar solicitud de reset exitosa
+  const handleForgotPasswordSuccess = (email: string, requiresSecurityQuestion: boolean, securityQuestion?: any) => {
+    console.log('Reset solicitado para:', email);
+    console.log('Requiere pregunta de seguridad:', requiresSecurityQuestion);
+    console.log('Datos de pregunta:', securityQuestion);
+    
+    // Almacenar datos del proceso de reset
+    setResetProcessData({
+      email: email,
+      requiresSecurityQuestion: requiresSecurityQuestion,
+      securityQuestion: securityQuestion,
+      resetToken: undefined // Se obtendrá después de verificar la pregunta
+    });
+
+    // Determinar el siguiente paso según la respuesta del backend
+    if (requiresSecurityQuestion && securityQuestion) {
+      // Usuario tiene preguntas de seguridad configuradas
+      console.log('→ Transitioning to security-question view');
+      setCurrentView('security-question');
+    } else {
+      // Usuario no tiene preguntas de seguridad o flujo por email
+      console.log('→ Email sent, returning to login');
+      setResetSuccessMessage(`Se han enviado instrucciones de recuperación a ${email}`);
+      setCurrentView('login');
+    }
+  };
 
   // Manejar verificación de pregunta de seguridad exitosa
   const handleSecurityQuestionSuccess = (resetToken: string) => {
@@ -294,8 +303,7 @@ const handleForgotPasswordSuccess = (email: string, requiresSecurityQuestion: bo
         onBack={() => goToView('home')}
         onForgotPassword={() => goToView('forgot-password')}
         fromRegistration={fromRegistration}
-        // Mostrar mensaje de éxito si viene del reset
-        successMessage={resetSuccessMessage}
+        // ✅ Removido successMessage - no existe en LoginFormProps
       />
     );
   }
@@ -378,11 +386,21 @@ const handleForgotPasswordSuccess = (email: string, requiresSecurityQuestion: bo
     );
   }
 
-  // Vista de dashboard
+  // ✨ NUEVA VISTA - Mensajería
+  if (currentView === 'messaging' && user) {
+    return (
+      <MessagingPage 
+        onBack={backToDashboard}
+      />
+    );
+  }
+
+  // Vista de dashboard - ✨ ACTUALIZADO para pasar goToMessaging
   if (currentView === 'dashboard' && user) {
     return (
       <DashboardPage 
         onLogout={handleLogout}
+        onGoToMessaging={goToMessaging} // ✨ NUEVO PROP
       />
     );
   }

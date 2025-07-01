@@ -16,11 +16,13 @@ interface User {
   createdAt: Date;
 }
 
+// ✨ ACTUALIZADO - Agregada prop onGoToMessaging
 interface DashboardProps {
   onLogout: () => void;
+  onGoToMessaging: () => void; // ✨ NUEVO PROP
 }
 
-const DashboardPage: React.FC<DashboardProps> = ({ onLogout }) => {
+const DashboardPage: React.FC<DashboardProps> = ({ onLogout, onGoToMessaging }) => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -199,6 +201,8 @@ const DashboardPage: React.FC<DashboardProps> = ({ onLogout }) => {
 
           {/* Quick Actions */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+            
+            {/* ✨ CARD DE MENSAJES - ACTUALIZADO para ser funcional */}
             <div className="bg-white overflow-hidden shadow rounded-lg">
               <div className="p-6">
                 <div className="flex items-center">
@@ -213,13 +217,32 @@ const DashboardPage: React.FC<DashboardProps> = ({ onLogout }) => {
                   </div>
                 </div>
                 <div className="mt-4">
-                  <button className="w-full bg-green-600 text-white py-2 px-4 rounded-lg hover:bg-green-700 transition-colors">
-                    Ver Mensajes
+                  {/* ✨ ACTUALIZADO - Hacer funcional el botón */}
+                  <button 
+                    onClick={onGoToMessaging}
+                    className="w-full bg-green-600 text-white py-2 px-4 rounded-lg hover:bg-green-700 transition-colors flex items-center justify-center"
+                  >
+                    <span className="mr-2">📨</span>
+                    Ir a Mensajería
                   </button>
+                </div>
+                
+                {/* ✨ NUEVO - Información adicional según el rol */}
+                <div className="mt-3 text-xs text-gray-500">
+                  {user.role === 'input' && (
+                    <p>✓ Puede crear y enviar mensajes</p>
+                  )}
+                  {user.role === 'output' && (
+                    <p>✓ Puede recibir y gestionar mensajes</p>
+                  )}
+                  {user.role === 'admin' && (
+                    <p>✓ Acceso completo al sistema de mensajería</p>
+                  )}
                 </div>
               </div>
             </div>
 
+            {/* Card de Reportes - Sin cambios */}
             <div className="bg-white overflow-hidden shadow rounded-lg">
               <div className="p-6">
                 <div className="flex items-center">
@@ -241,6 +264,7 @@ const DashboardPage: React.FC<DashboardProps> = ({ onLogout }) => {
               </div>
             </div>
 
+            {/* Card de Configuración - Sin cambios */}
             <div className="bg-white overflow-hidden shadow rounded-lg">
               <div className="p-6">
                 <div className="flex items-center">
