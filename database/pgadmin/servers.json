@@ -1,0 +1,19 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "GAMC Sistema Local",
+      "Group": "Servers",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "gamc_system",
+      "Username": "gamc_user",
+      "Password": "gamc_password_2024",
+      "SSLMode": "prefer",
+      "Comment": "Base de datos principal del Sistema Web Centralizado GAMC",
+      "Shared": true,
+      "PassFile": "",
+      "BGColor": "#3498db",
+      "FGColor": "#ffffff"
+    }
+  }
+}

@@ -1,0 +1,167 @@
+# ========================================
+# COMANDOS POWERSHELL - FLUJO PREGUNTAS DE SEGURIDAD
+# ========================================
+
+Write-Host "=== 🔑 FLUJO DE PREGUNTAS DE SEGURIDAD ==="
+
+# ========================================
+# PREPARACIÓN: Login para obtener token
+# ========================================
+Write-Host "`n=== PREPARACIÓN: LOGIN ==="
+
+# Esperar para evitar rate limiting
+Write-Host "⏳ Esperando 2 minutos para evitar rate limiting..."
+Start-Sleep -Seconds 120
+
+# Intentar login con manejo de errores
+try {
+    $login = Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/login" -Method POST -ContentType "application/json" -Body '{"email":"usuario@gamc.gov.bo","password":"NewPass123!"}' -SessionVariable session
+    $token = $login.data.accessToken
+    Write-Host "✅ Token obtenido: $($token.Substring(0,20))..."
+} catch {
+    Write-Host "❌ Error en login (posible rate limiting): $($_.Exception.Message)"
+    Write-Host "💡 Registrando nuevo usuario para continuar pruebas..."
+    
+    # Registrar nuevo usuario para pruebas
+    $randomId = Get-Random -Minimum 1000 -Maximum 9999
+    $newUserBody = @{
+        email = "testuser$randomId@gamc.gov.bo"
+        password = "TestPass123!"
+        firstName = "Test"
+        lastName = "User$randomId"
+        organizationalUnitId = 1
+    } | ConvertTo-Json
+    
+    try {
+        Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/register" -Method POST -ContentType "application/json" -Body $newUserBody
+        Write-Host "✅ Usuario registrado: testuser$randomId@gamc.gov.bo"
+        
+        # Login con nuevo usuario
+        $loginBody = @{
+            email = "testuser$randomId@gamc.gov.bo"
+            password = "TestPass123!"
+        } | ConvertTo-Json
+        
+        $login = Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/login" -Method POST -ContentType "application/json" -Body $loginBody -SessionVariable session
+        $token = $login.data.accessToken
+        Write-Host "✅ Token obtenido con nuevo usuario: $($token.Substring(0,20))..."
+    } catch {
+        Write-Host "❌ Error crítico: No se puede obtener token. Rate limiting muy agresivo."
+        Write-Host "🛠️ PROBLEMA DEL BACKEND: Rate limiting demasiado restrictivo"
+        return
+    }
+}
+
+# ========================================
+# 8. OBTENER CATÁLOGO DE PREGUNTAS (PÚBLICO)
+# ========================================
+Write-Host "`n=== 8. OBTENER CATÁLOGO DE PREGUNTAS ==="
+Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/security-questions" -Method GET
+
+# ========================================
+# 9. OBTENER ESTADO DE PREGUNTAS DEL USUARIO
+# ========================================
+Write-Host "`n=== 9. OBTENER ESTADO DE PREGUNTAS DEL USUARIO ==="
+Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/security-status" -Method GET -Headers @{Authorization="Bearer $token"}
+
+# ========================================
+# 10. CONFIGURAR PREGUNTAS DE SEGURIDAD
+# ========================================
+Write-Host "`n=== 10. CONFIGURAR PREGUNTAS DE SEGURIDAD ==="
+
+# Configurar 3 preguntas de seguridad
+$securityQuestionsBody = @{
+  questions = @(
+    @{questionId=1; answer="Firulais"},
+    @{questionId=5; answer="Carlos"},
+    @{questionId=12; answer="Salteñas"}
+  )
+} | ConvertTo-Json -Depth 5
+
+Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/security-questions" -Method POST -Headers @{Authorization="Bearer $token"} -ContentType "application/json" -Body $securityQuestionsBody
+
+# ========================================
+# 11. ACTUALIZAR PREGUNTA DE SEGURIDAD
+# ========================================
+Write-Host "`n=== 11. ACTUALIZAR PREGUNTA DE SEGURIDAD ==="
+
+# Actualizar la pregunta ID 1 (primera mascota)
+$updateBody = @{
+  newAnswer = "Toby"
+} | ConvertTo-Json
+
+Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/security-questions/1" -Method PUT -Headers @{Authorization="Bearer $token"} -ContentType "application/json" -Body $updateBody
+
+# ========================================
+# 12. ELIMINAR PREGUNTA DE SEGURIDAD
+# ========================================
+Write-Host "`n=== 12. ELIMINAR PREGUNTA DE SEGURIDAD ==="
+
+# Eliminar la pregunta ID 5 (mejor amigo de la infancia)
+Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/security-questions/5" -Method DELETE -Headers @{Authorization="Bearer $token"}
+
+# ========================================
+# VERIFICACIÓN: Ver estado final
+# ========================================
+Write-Host "`n=== VERIFICACIÓN FINAL: ESTADO DE PREGUNTAS ==="
+Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/security-status" -Method GET -Headers @{Authorization="Bearer $token"}
+
+# ========================================
+# COMANDOS INDIVIDUALES PARA COPIAR
+# ========================================
+
+Write-Host "`n========================================`nCOMANDOS INDIVIDUALES PARA COPIAR:`n========================================"
+
+Write-Host "`n# 1. LOGIN PREVIO (CON MANEJO DE RATE LIMITING)"
+Write-Host '# Si hay rate limiting, registrar nuevo usuario'
+Write-Host '$randomId = Get-Random -Minimum 1000 -Maximum 9999'
+Write-Host '$newUserBody = @{email="testuser$randomId@gamc.gov.bo"; password="TestPass123!"; firstName="Test"; lastName="User$randomId"; organizationalUnitId=1} | ConvertTo-Json'
+Write-Host 'Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/register" -Method POST -ContentType "application/json" -Body $newUserBody'
+Write-Host '$loginBody = @{email="testuser$randomId@gamc.gov.bo"; password="TestPass123!"} | ConvertTo-Json'
+Write-Host '$login = Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/login" -Method POST -ContentType "application/json" -Body $loginBody; $token = $login.data.accessToken'
+
+Write-Host "`n# 2. CATÁLOGO DE PREGUNTAS (PÚBLICO)"
+Write-Host 'Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/security-questions" -Method GET'
+
+Write-Host "`n# 3. ESTADO DE PREGUNTAS DEL USUARIO"
+Write-Host 'Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/security-status" -Method GET -Headers @{Authorization="Bearer $token"}'
+
+Write-Host "`n# 4. CONFIGURAR PREGUNTAS DE SEGURIDAD"
+Write-Host '$body = @{questions = @(@{questionId=1; answer="Firulais"}, @{questionId=5; answer="Carlos"}, @{questionId=12; answer="Salteñas"})} | ConvertTo-Json -Depth 5; Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/security-questions" -Method POST -Headers @{Authorization="Bearer $token"} -ContentType "application/json" -Body $body'
+
+Write-Host "`n# 5. ACTUALIZAR PREGUNTA"
+Write-Host '$updateBody = @{newAnswer = "Toby"} | ConvertTo-Json; Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/security-questions/1" -Method PUT -Headers @{Authorization="Bearer $token"} -ContentType "application/json" -Body $updateBody'
+
+Write-Host "`n# 6. ELIMINAR PREGUNTA"
+Write-Host 'Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/security-questions/5" -Method DELETE -Headers @{Authorization="Bearer $token"}'
+
+# ========================================
+# CASOS DE ERROR PARA PROBAR
+# ========================================
+
+Write-Host "`n========================================`nCASOS DE ERROR PARA PROBAR:`n========================================"
+
+Write-Host "`n# Error: Sin token de autenticación"
+try {
+    Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/security-status" -Method GET
+} catch {
+    Write-Host "✅ Error esperado: $($_.Exception.Message)"
+}
+
+Write-Host "`n# Error: Pregunta inexistente"
+try {
+    $errorBody = @{questions = @(@{questionId=999; answer="test"})} | ConvertTo-Json -Depth 5
+    Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/security-questions" -Method POST -Headers @{Authorization="Bearer $token"} -ContentType "application/json" -Body $errorBody
+} catch {
+    Write-Host "✅ Error esperado: $($_.Exception.Message)"
+}
+
+Write-Host "`n# Error: Respuesta muy corta"
+try {
+    $shortAnswerBody = @{newAnswer = "a"} | ConvertTo-Json
+    Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/security-questions/1" -Method PUT -Headers @{Authorization="Bearer $token"} -ContentType "application/json" -Body $shortAnswerBody
+} catch {
+    Write-Host "✅ Error esperado: $($_.Exception.Message)"
+}
+
+Write-Host "`n========================================`n✅ FLUJO DE PREGUNTAS DE SEGURIDAD COMPLETADO`n========================================"

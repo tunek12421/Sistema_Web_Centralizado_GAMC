@@ -1,0 +1,112 @@
+# ========================================
+# COMANDOS DIRECTOS POWERSHELL - FLUJO AUTENTICACIÓN
+# ========================================
+
+Write-Host "=== 1. REGISTRO DE USUARIO ==="
+# Registro básico
+Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/register" -Method POST -ContentType "application/json" -Body '{"email":"test1@gamc.gov.bo","password":"Pass123!","firstName":"Test","lastName":"User","organizationalUnitId":1}'
+
+# Registro con rol
+Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/register" -Method POST -ContentType "application/json" -Body '{"email":"admin1@gamc.gov.bo","password":"Admin123!","firstName":"Admin","lastName":"User","organizationalUnitId":1,"role":"admin"}'
+
+Write-Host "`n=== 2. LOGIN ==="
+# Login y guardar token
+$login = Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/login" -Method POST -ContentType "application/json" -Body '{"email":"test1@gamc.gov.bo","password":"Pass123!"}' -SessionVariable session
+$token = $login.data.accessToken
+Write-Host "Token: $($token.Substring(0,20))..."
+
+Write-Host "`n=== 3. OBTENER PERFIL ==="
+# Ver perfil
+Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/profile" -Method GET -Headers @{Authorization="Bearer $token"}
+
+Write-Host "`n=== 4. VERIFICAR TOKEN ==="
+# Verificar token
+Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/verify" -Method GET -Headers @{Authorization="Bearer $token"}
+
+Write-Host "`n=== 5. CAMBIAR CONTRASEÑA ==="
+# Cambiar contraseña
+Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/change-password" -Method PUT -Headers @{Authorization="Bearer $token"} -ContentType "application/json" -Body '{"currentPassword":"Pass123!","newPassword":"NewPass123!"}'
+
+# Verificar con nueva contraseña
+$newLogin = Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/login" -Method POST -ContentType "application/json" -Body '{"email":"test1@gamc.gov.bo","password":"NewPass123!"}'
+
+Write-Host "`n=== 6. RENOVAR TOKEN ==="
+# Con cookie
+Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/refresh" -Method POST -WebSession $session
+
+# Con refresh token en body
+$refreshToken = $session.Cookies.GetCookies("http://localhost:3000") | Where-Object {$_.Name -eq "refreshToken"} | Select -ExpandProperty Value
+Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/refresh" -Method POST -ContentType "application/json" -Body "{`"refreshToken`":`"$refreshToken`"}"
+
+Write-Host "`n=== 7. LOGOUT ==="
+# Cerrar sesión
+Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/logout" -Method POST -Headers @{Authorization="Bearer $token"}
+
+# Verificar token inválido
+try {
+  Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/verify" -Method GET -Headers @{Authorization="Bearer $token"}
+} catch {
+  Write-Host "✅ Token invalidado correctamente"
+}
+
+# ========================================
+# COMANDOS INDIVIDUALES PARA COPIAR
+# ========================================
+
+# 1. REGISTRO SIMPLE
+Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/register" -Method POST -ContentType "application/json" -Body '{"email":"usuario@gamc.gov.bo","password":"Pass123!","firstName":"Nombre","lastName":"Apellido","organizationalUnitId":1}'
+
+# 2. REGISTRO CON PREGUNTAS DE SEGURIDAD
+$body = @{
+  email = "secure@gamc.gov.bo"
+  password = "Pass123!"
+  firstName = "Usuario"
+  lastName = "Seguro"
+  organizationalUnitId = 1
+  securityQuestions = @{
+    questions = @(
+      @{questionId=1; answer="mascota"},
+      @{questionId=5; answer="amigo"},
+      @{questionId=12; answer="salteñas"}
+    )
+  }
+} | ConvertTo-Json -Depth 5
+Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/register" -Method POST -ContentType "application/json" -Body $body
+
+# 3. LOGIN
+$response = Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/login" -Method POST -ContentType "application/json" -Body '{"email":"usuario@gamc.gov.bo","password":"Pass123!"}' -SessionVariable session
+$token = $response.data.accessToken
+
+# 4. PERFIL
+Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/profile" -Method GET -Headers @{Authorization="Bearer $token"}
+
+# 5. VERIFICAR TOKEN
+Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/verify" -Method GET -Headers @{Authorization="Bearer $token"}
+
+# 6. CAMBIAR CONTRASEÑA
+Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/change-password" -Method PUT -Headers @{Authorization="Bearer $token"} -ContentType "application/json" -Body '{"currentPassword":"Pass123!","newPassword":"NewPass123!"}'
+
+# 7. REFRESH TOKEN (con cookie)
+Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/refresh" -Method POST -WebSession $session
+
+# 8. LOGOUT
+Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/logout" -Method POST -Headers @{Authorization="Bearer $token"}
+
+# ========================================
+# CASOS DE ERROR PARA PROBAR
+# ========================================
+
+# Email no institucional
+Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/register" -Method POST -ContentType "application/json" -Body '{"email":"usuario@gmail.com","password":"Pass123!","firstName":"Test","lastName":"User","organizationalUnitId":1}'
+
+# Contraseña débil
+Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/register" -Method POST -ContentType "application/json" -Body '{"email":"test@gamc.gov.bo","password":"123","firstName":"Test","lastName":"User","organizationalUnitId":1}'
+
+# Login con credenciales incorrectas
+Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/login" -Method POST -ContentType "application/json" -Body '{"email":"usuario@gamc.gov.bo","password":"wrong"}'
+
+# Request sin token
+Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/profile" -Method GET
+
+# Token inválido
+Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/profile" -Method GET -Headers @{Authorization="Bearer invalid-token-12345"}

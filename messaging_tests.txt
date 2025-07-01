@@ -1,0 +1,332 @@
+# ========================================
+# COMANDOS POWERSHELL - FLUJO MENSAJERÍA
+# ========================================
+
+Write-Host "=== 📨 FLUJO DE MENSAJERÍA ==="
+
+# ========================================
+# PREPARACIÓN: Crear usuarios con diferentes roles
+# ========================================
+Write-Host "`n=== PREPARACIÓN: USUARIOS CON DIFERENTES ROLES ==="
+
+# Usuario INPUT (puede crear mensajes)
+$inputUserId = Get-Random -Minimum 7000 -Maximum 7999
+$inputUserBody = @{
+    email = "input$inputUserId@gamc.gov.bo"
+    password = "InputTest123!"
+    firstName = "Usuario"
+    lastName = "Input$inputUserId"
+    organizationalUnitId = 1
+    role = "input"
+} | ConvertTo-Json
+
+# Usuario OUTPUT (puede leer mensajes)
+$outputUserId = Get-Random -Minimum 8000 -Maximum 8999
+$outputUserBody = @{
+    email = "output$outputUserId@gamc.gov.bo"
+    password = "OutputTest123!"
+    firstName = "Usuario"
+    lastName = "Output$outputUserId"
+    organizationalUnitId = 2
+    role = "output"
+} | ConvertTo-Json
+
+# Usuario ADMIN (acceso completo)
+$adminUserId = Get-Random -Minimum 9000 -Maximum 9999
+$adminUserBody = @{
+    email = "admin$adminUserId@gamc.gov.bo"
+    password = "AdminTest123!"
+    firstName = "Usuario"
+    lastName = "Admin$adminUserId"
+    organizationalUnitId = 1
+    role = "admin"
+} | ConvertTo-Json
+
+Write-Host "🔧 Registrando usuarios con diferentes roles..."
+try {
+    # Registrar usuario INPUT
+    Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/register" -Method POST -ContentType "application/json" -Body $inputUserBody
+    Write-Host "✅ Usuario INPUT registrado: input$inputUserId@gamc.gov.bo"
+    
+    # Login usuario INPUT
+    $inputLoginBody = @{
+        email = "input$inputUserId@gamc.gov.bo"
+        password = "InputTest123!"
+    } | ConvertTo-Json
+    $inputLogin = Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/login" -Method POST -ContentType "application/json" -Body $inputLoginBody
+    $inputToken = $inputLogin.data.accessToken
+    
+    # Registrar usuario OUTPUT
+    Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/register" -Method POST -ContentType "application/json" -Body $outputUserBody
+    Write-Host "✅ Usuario OUTPUT registrado: output$outputUserId@gamc.gov.bo"
+    
+    # Login usuario OUTPUT
+    $outputLoginBody = @{
+        email = "output$outputUserId@gamc.gov.bo"
+        password = "OutputTest123!"
+    } | ConvertTo-Json
+    $outputLogin = Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/login" -Method POST -ContentType "application/json" -Body $outputLoginBody
+    $outputToken = $outputLogin.data.accessToken
+    
+    # Registrar usuario ADMIN
+    Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/register" -Method POST -ContentType "application/json" -Body $adminUserBody
+    Write-Host "✅ Usuario ADMIN registrado: admin$adminUserId@gamc.gov.bo"
+    
+    # Login usuario ADMIN
+    $adminLoginBody = @{
+        email = "admin$adminUserId@gamc.gov.bo"
+        password = "AdminTest123!"
+    } | ConvertTo-Json
+    $adminLogin = Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/login" -Method POST -ContentType "application/json" -Body $adminLoginBody
+    $adminToken = $adminLogin.data.accessToken
+    
+    Write-Host "✅ Todos los usuarios autenticados exitosamente"
+    
+} catch {
+    Write-Host "❌ Error en preparación: $($_.Exception.Message)"
+    return
+}
+
+# ========================================
+# 25. OBTENER TIPOS DE MENSAJES
+# ========================================
+Write-Host "`n=== 25. OBTENER TIPOS DE MENSAJES ==="
+
+try {
+    $typesResponse = Invoke-RestMethod -Uri "http://localhost:3000/api/v1/messages/types" -Method GET -Headers @{Authorization="Bearer $inputToken"}
+    Write-Host "✅ Tipos de mensajes obtenidos:"
+    $typesResponse.data | ForEach-Object { Write-Host "  - $_" }
+} catch {
+    Write-Host "❌ Error obteniendo tipos: $($_.Exception.Message)"
+}
+
+# ========================================
+# 26. OBTENER ESTADOS DE MENSAJES
+# ========================================
+Write-Host "`n=== 26. OBTENER ESTADOS DE MENSAJES ==="
+
+try {
+    $statusesResponse = Invoke-RestMethod -Uri "http://localhost:3000/api/v1/messages/statuses" -Method GET -Headers @{Authorization="Bearer $inputToken"}
+    Write-Host "✅ Estados de mensajes obtenidos:"
+    $statusesResponse.data | ForEach-Object { Write-Host "  - $_" }
+} catch {
+    Write-Host "❌ Error obteniendo estados: $($_.Exception.Message)"
+}
+
+# ========================================
+# 18. CREAR MENSAJE (ROL INPUT)
+# ========================================
+Write-Host "`n=== 18. CREAR MENSAJE (ROL INPUT) ==="
+
+$messageBody = @{
+    subject = "Solicitud de Información - Test $inputUserId"
+    content = "Este es un mensaje de prueba enviado desde el flujo de testing automatizado. Requiere respuesta urgente para validar el sistema de mensajería."
+    receiverUnitId = 2
+    messageTypeId = 1
+    priorityLevel = 2
+    isUrgent = $true
+} | ConvertTo-Json
+
+try {
+    $createResponse = Invoke-RestMethod -Uri "http://localhost:3000/api/v1/messages" -Method POST -Headers @{Authorization="Bearer $inputToken"} -ContentType "application/json" -Body $messageBody
+    Write-Host "✅ Mensaje creado exitosamente"
+    Write-Host "ID: $($createResponse.data.id)"
+    Write-Host "Asunto: $($createResponse.data.subject)"
+    Write-Host "Estado: $($createResponse.data.statusId)"
+    Write-Host "Es urgente: $($createResponse.data.isUrgent)"
+    $messageId = $createResponse.data.id
+} catch {
+    Write-Host "❌ Error creando mensaje: $($_.Exception.Message)"
+}
+
+# ========================================
+# 19. LISTAR MENSAJES (ROL OUTPUT)
+# ========================================
+Write-Host "`n=== 19. LISTAR MENSAJES (ROL OUTPUT) ==="
+
+try {
+    $listResponse = Invoke-RestMethod -Uri "http://localhost:3000/api/v1/messages?page=1&limit=10&sortBy=created_at&sortOrder=desc" -Method GET -Headers @{Authorization="Bearer $outputToken"}
+    Write-Host "✅ Mensajes listados exitosamente"
+    Write-Host "Total: $($listResponse.data.total)"
+    Write-Host "Página: $($listResponse.data.page)"
+    Write-Host "Límite: $($listResponse.data.limit)"
+    Write-Host "Total páginas: $($listResponse.data.totalPages)"
+    
+    if ($listResponse.data.messages.Count -gt 0) {
+        Write-Host "Último mensaje: $($listResponse.data.messages[0].subject)"
+    }
+} catch {
+    Write-Host "❌ Error listando mensajes: $($_.Exception.Message)"
+}
+
+# ========================================
+# 20. OBTENER MENSAJE POR ID
+# ========================================
+Write-Host "`n=== 20. OBTENER MENSAJE POR ID ==="
+
+if ($messageId) {
+    try {
+        $getResponse = Invoke-RestMethod -Uri "http://localhost:3000/api/v1/messages/$messageId" -Method GET -Headers @{Authorization="Bearer $outputToken"}
+        Write-Host "✅ Mensaje obtenido exitosamente"
+        Write-Host "ID: $($getResponse.data.id)"
+        Write-Host "Asunto: $($getResponse.data.subject)"
+        Write-Host "Contenido: $($getResponse.data.content.Substring(0, [Math]::Min(50, $getResponse.data.content.Length)))..."
+        Write-Host "Remitente: $($getResponse.data.sender.firstName) $($getResponse.data.sender.lastName)"
+        Write-Host "Unidad origen: $($getResponse.data.senderUnit.name)"
+        Write-Host "Leído en: $($getResponse.data.readAt)"
+    } catch {
+        Write-Host "❌ Error obteniendo mensaje: $($_.Exception.Message)"
+    }
+} else {
+    Write-Host "⚠️ No hay mensaje ID para consultar"
+}
+
+# ========================================
+# 21. MARCAR MENSAJE COMO LEÍDO
+# ========================================
+Write-Host "`n=== 21. MARCAR MENSAJE COMO LEÍDO ==="
+
+if ($messageId) {
+    try {
+        $readResponse = Invoke-RestMethod -Uri "http://localhost:3000/api/v1/messages/$messageId/read" -Method PUT -Headers @{Authorization="Bearer $outputToken"}
+        Write-Host "✅ Mensaje marcado como leído"
+        Write-Host "Mensaje: $($readResponse.message)"
+    } catch {
+        Write-Host "❌ Error marcando como leído: $($_.Exception.Message)"
+    }
+} else {
+    Write-Host "⚠️ No hay mensaje ID para marcar como leído"
+}
+
+# ========================================
+# 22. ACTUALIZAR ESTADO DE MENSAJE
+# ========================================
+Write-Host "`n=== 22. ACTUALIZAR ESTADO DE MENSAJE ==="
+
+if ($messageId) {
+    $updateStatusBody = @{
+        status = "IN_PROGRESS"
+    } | ConvertTo-Json
+    
+    try {
+        $updateResponse = Invoke-RestMethod -Uri "http://localhost:3000/api/v1/messages/$messageId/status" -Method PUT -Headers @{Authorization="Bearer $outputToken"} -ContentType "application/json" -Body $updateStatusBody
+        Write-Host "✅ Estado actualizado exitosamente"
+        Write-Host "Mensaje: $($updateResponse.message)"
+    } catch {
+        Write-Host "❌ Error actualizando estado: $($_.Exception.Message)"
+    }
+} else {
+    Write-Host "⚠️ No hay mensaje ID para actualizar estado"
+}
+
+# ========================================
+# 24. OBTENER ESTADÍSTICAS DE MENSAJES
+# ========================================
+Write-Host "`n=== 24. OBTENER ESTADÍSTICAS DE MENSAJES ==="
+
+try {
+    $statsResponse = Invoke-RestMethod -Uri "http://localhost:3000/api/v1/messages/stats" -Method GET -Headers @{Authorization="Bearer $adminToken"}
+    Write-Host "✅ Estadísticas obtenidas:"
+    Write-Host "Total mensajes: $($statsResponse.data.totalMessages)"
+    Write-Host "Mensajes urgentes: $($statsResponse.data.urgentMessages)"
+    Write-Host "Tiempo promedio respuesta: $($statsResponse.data.averageResponseTime)"
+    
+    Write-Host "Mensajes por estado:"
+    $statsResponse.data.messagesByStatus.PSObject.Properties | ForEach-Object {
+        Write-Host "  $($_.Name): $($_.Value)"
+    }
+} catch {
+    Write-Host "❌ Error obteniendo estadísticas: $($_.Exception.Message)"
+}
+
+# ========================================
+# 23. ELIMINAR MENSAJE (SOFT DELETE)
+# ========================================
+Write-Host "`n=== 23. ELIMINAR MENSAJE (SOFT DELETE) ==="
+
+if ($messageId) {
+    try {
+        $deleteResponse = Invoke-RestMethod -Uri "http://localhost:3000/api/v1/messages/$messageId" -Method DELETE -Headers @{Authorization="Bearer $inputToken"}
+        Write-Host "✅ Mensaje eliminado exitosamente"
+        Write-Host "Mensaje: $($deleteResponse.message)"
+    } catch {
+        Write-Host "❌ Error eliminando mensaje: $($_.Exception.Message)"
+    }
+} else {
+    Write-Host "⚠️ No hay mensaje ID para eliminar"
+}
+
+# ========================================
+# COMANDOS INDIVIDUALES PARA COPIAR
+# ========================================
+
+Write-Host "`n========================================`nCOMANDOS INDIVIDUALES PARA COPIAR:`n========================================"
+
+Write-Host "`n# 1. PREPARACIÓN - USUARIOS CON ROLES"
+Write-Host '# INPUT User'
+Write-Host '$inputId = Get-Random -Minimum 7000 -Maximum 7999'
+Write-Host '$inputBody = @{email="input$inputId@gamc.gov.bo"; password="InputTest123!"; firstName="Usuario"; lastName="Input$inputId"; organizationalUnitId=1; role="input"} | ConvertTo-Json'
+Write-Host 'Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/register" -Method POST -ContentType "application/json" -Body $inputBody'
+Write-Host '$inputLogin = Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/login" -Method POST -ContentType "application/json" -Body $loginBody; $inputToken = $inputLogin.data.accessToken'
+
+Write-Host "`n# 2. TIPOS Y ESTADOS"
+Write-Host 'Invoke-RestMethod -Uri "http://localhost:3000/api/v1/messages/types" -Method GET -Headers @{Authorization="Bearer $inputToken"}'
+Write-Host 'Invoke-RestMethod -Uri "http://localhost:3000/api/v1/messages/statuses" -Method GET -Headers @{Authorization="Bearer $inputToken"}'
+
+Write-Host "`n# 3. CREAR MENSAJE"
+Write-Host '$msgBody = @{subject="Test Message"; content="Contenido de prueba"; receiverUnitId=2; messageTypeId=1; priorityLevel=2; isUrgent=$true} | ConvertTo-Json'
+Write-Host '$msg = Invoke-RestMethod -Uri "http://localhost:3000/api/v1/messages" -Method POST -Headers @{Authorization="Bearer $inputToken"} -ContentType "application/json" -Body $msgBody'
+
+Write-Host "`n# 4. LISTAR MENSAJES"
+Write-Host 'Invoke-RestMethod -Uri "http://localhost:3000/api/v1/messages?page=1&limit=10" -Method GET -Headers @{Authorization="Bearer $outputToken"}'
+
+Write-Host "`n# 5. OBTENER MENSAJE"
+Write-Host 'Invoke-RestMethod -Uri "http://localhost:3000/api/v1/messages/$messageId" -Method GET -Headers @{Authorization="Bearer $outputToken"}'
+
+Write-Host "`n# 6. MARCAR COMO LEÍDO"
+Write-Host 'Invoke-RestMethod -Uri "http://localhost:3000/api/v1/messages/$messageId/read" -Method PUT -Headers @{Authorization="Bearer $outputToken"}'
+
+Write-Host "`n# 7. ACTUALIZAR ESTADO"
+Write-Host '$statusBody = @{status="IN_PROGRESS"} | ConvertTo-Json'
+Write-Host 'Invoke-RestMethod -Uri "http://localhost:3000/api/v1/messages/$messageId/status" -Method PUT -Headers @{Authorization="Bearer $outputToken"} -ContentType "application/json" -Body $statusBody'
+
+Write-Host "`n# 8. ESTADÍSTICAS"
+Write-Host 'Invoke-RestMethod -Uri "http://localhost:3000/api/v1/messages/stats" -Method GET -Headers @{Authorization="Bearer $adminToken"}'
+
+Write-Host "`n# 9. ELIMINAR MENSAJE"
+Write-Host 'Invoke-RestMethod -Uri "http://localhost:3000/api/v1/messages/$messageId" -Method DELETE -Headers @{Authorization="Bearer $inputToken"}'
+
+# ========================================
+# CASOS DE ERROR PARA PROBAR
+# ========================================
+
+Write-Host "`n========================================`nCASOS DE ERROR PARA PROBAR:`n========================================"
+
+Write-Host "`n# Error: OUTPUT intentando crear mensaje"
+try {
+    $forbiddenBody = @{
+        subject = "No debería poder crear"
+        content = "Test"
+        receiverUnitId = 1
+        messageTypeId = 1
+    } | ConvertTo-Json
+    Invoke-RestMethod -Uri "http://localhost:3000/api/v1/messages" -Method POST -Headers @{Authorization="Bearer $outputToken"} -ContentType "application/json" -Body $forbiddenBody
+} catch {
+    Write-Host "✅ Error esperado (OUTPUT no puede crear): $($_.Exception.Message)"
+}
+
+Write-Host "`n# Error: Mensaje sin autenticación"
+try {
+    Invoke-RestMethod -Uri "http://localhost:3000/api/v1/messages" -Method GET
+} catch {
+    Write-Host "✅ Error esperado (sin auth): $($_.Exception.Message)"
+}
+
+Write-Host "`n# Error: Mensaje inexistente"
+try {
+    Invoke-RestMethod -Uri "http://localhost:3000/api/v1/messages/99999" -Method GET -Headers @{Authorization="Bearer $outputToken"}
+} catch {
+    Write-Host "✅ Error esperado (mensaje inexistente): $($_.Exception.Message)"
+}
+
+Write-Host "`n========================================`n✅ FLUJO DE MENSAJERÍA COMPLETADO`n========================================"

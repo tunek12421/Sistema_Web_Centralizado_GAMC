@@ -1,0 +1,88 @@
+services:
+  # Servicio Redis principal
+  redis:
+    image: redis:7-alpine
+    container_name: gamc_redis
+    restart: unless-stopped
+    command: redis-server /usr/local/etc/redis/redis.conf
+    environment:
+      TZ: America/La_Paz
+    ports:
+      - "6379:6379"
+    volumes:
+      # Configuración personalizada
+      - ./redis.conf:/usr/local/etc/redis/redis.conf:ro
+      # Persistencia de datos
+      - redis_data:/data
+      # Logs
+      - ./logs:/var/log/redis
+    networks:
+      - gamc_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    sysctls:
+      - net.core.somaxconn=1024
+
+  # Redis Commander - Interface web para administración (opcional)
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: gamc_redis_commander
+    restart: unless-stopped
+    environment:
+      REDIS_HOSTS: "GAMC Redis:gamc_redis:6379"
+      REDIS_PASSWORD: "gamc_redis_password_2024"
+      HTTP_USER: admin
+      HTTP_PASSWORD: admin123
+      PORT: 8081
+    ports:
+      - "8081:8081"
+    networks:
+      - gamc_network
+    depends_on:
+      redis:
+        condition: service_healthy
+    profiles:
+      - admin
+
+  # Redis Sentinel para alta disponibilidad (opcional para producción)
+  redis-sentinel:
+    image: redis:7-alpine
+    container_name: gamc_redis_sentinel
+    restart: unless-stopped
+    command: redis-sentinel /usr/local/etc/redis/sentinel.conf
+    environment:
+      TZ: America/La_Paz
+    ports:
+      - "26379:26379"
+    volumes:
+      - ./sentinel.conf:/usr/local/etc/redis/sentinel.conf:ro
+      - sentinel_data:/data
+    networks:
+      - gamc_network
+    depends_on:
+      redis:
+        condition: service_healthy
+    profiles:
+      - production
+
+volumes:
+  redis_data:
+    driver: local
+    name: gamc_redis_data
+  sentinel_data:
+    driver: local
+    name: gamc_redis_sentinel_data
+
+networks:
+  gamc_network:
+    external: true
+    name: gamc_network

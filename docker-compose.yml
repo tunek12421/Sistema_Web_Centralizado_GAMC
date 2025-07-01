@@ -1,0 +1,346 @@
+# ========================================
+# GAMC Sistema Web Centralizado - Docker Compose Unificado
+# Incluye: Backend Go + Frontend Auth + PostgreSQL + Redis + MinIO
+# ========================================
+
+version: '3.8'
+
+services:
+  # ========================================
+  # SERVICIOS DE INFRAESTRUCTURA
+  # ========================================
+
+  # Base de datos PostgreSQL
+  postgres:
+    image: postgres:15-alpine
+    container_name: gamc_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: gamc_system
+      POSTGRES_USER: gamc_user
+      POSTGRES_PASSWORD: gamc_password_2024
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=es_BO.UTF-8"
+      TZ: America/La_Paz
+    ports:
+      - "5432:5432"
+    volumes:
+      # Scripts de inicialización
+      - ./database/init:/docker-entrypoint-initdb.d:ro
+      # Persistencia de datos
+      - postgres_data:/var/lib/postgresql/data
+      # Configuración personalizada
+      - ./database/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      # Backups
+      - ./database/backups:/backups
+    networks:
+      - gamc_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gamc_user -d gamc_system"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Redis Cache y Sesiones
+  redis:
+    image: redis:7-alpine
+    container_name: gamc_redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass gamc_redis_password_2024
+    environment:
+      TZ: America/La_Paz
+    ports:
+      - "6379:6379"
+    volumes:
+      # Persistencia de datos
+      - redis_data:/data
+      # Configuración personalizada
+      - ./redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+      # Logs
+      - ./redis/logs:/var/log/redis
+    networks:
+      - gamc_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "gamc_redis_password_2024", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    sysctls:
+      - net.core.somaxconn=1024
+
+  # MinIO - Almacenamiento de objetos
+  minio:
+    image: minio/minio:latest
+    container_name: gamc_minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: gamc_admin
+      MINIO_ROOT_PASSWORD: gamc_minio_password_2024
+      MINIO_BROWSER_REDIRECT_URL: http://localhost:9001
+      MINIO_SERVER_URL: http://localhost:9000
+      TZ: America/La_Paz
+    ports:
+      - "9000:9000"  # API
+      - "9001:9001"  # Console Web UI
+    volumes:
+      # Datos persistentes
+      - minio_data:/data
+      # Configuración
+      - ./minio/config:/root/.minio
+      # Políticas personalizadas
+      - ./minio/policies:/policies:ro
+    networks:
+      - gamc_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    depends_on:
+      - postgres
+      - redis
+
+  # ========================================
+  # SERVICIOS DE APLICACIÓN
+  # ========================================
+
+  # Backend Go
+  gamc-backend-go:
+    build:
+      context: ./gamc-backend-go
+      dockerfile: docker/Dockerfile
+    container_name: gamc_backend_go
+    restart: unless-stopped
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+      API_PREFIX: /api/v1
+      DATABASE_URL: postgresql://gamc_user:gamc_password_2024@postgres:5432/gamc_system
+      REDIS_URL: redis://:gamc_redis_password_2024@redis:6379/0
+      JWT_SECRET: gamc_jwt_secret_super_secure_2024_key_never_share
+      JWT_REFRESH_SECRET: gamc_jwt_refresh_secret_super_secure_2024_key
+      JWT_EXPIRES_IN: 15m
+      JWT_REFRESH_EXPIRES_IN: 7d
+      JWT_ISSUER: gamc-auth
+      JWT_AUDIENCE: gamc-system
+      CORS_ORIGIN: http://localhost:5173,http://localhost:3000,http://localhost:4000
+      RATE_LIMIT_WINDOW_MS: 900000
+      RATE_LIMIT_MAX_REQUESTS: 100
+      TZ: America/La_Paz
+      LOG_LEVEL: info
+    ports:
+      - "3000:3000"
+    volumes:
+      # Para desarrollo: montar código fuente para hot reload (opcional)
+      # - ./gamc-backend-go:/app:ro
+      # - /app/vendor
+      # Logs de aplicación
+      - ./gamc-backend-go/logs:/app/logs
+    networks:
+      - gamc_network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Frontend de Autenticación
+  gamc-auth-frontend:
+    build:
+      context: ./frontend-auth
+      dockerfile: Dockerfile
+      target: development
+    container_name: gamc_auth_frontend
+    restart: unless-stopped
+    environment:
+      VITE_API_URL: http://localhost:3000/api/v1
+      VITE_APP_NAME: GAMC Auth System
+      VITE_MINIO_URL: http://localhost:9000
+      NODE_ENV: development
+    ports:
+      - "5173:5173"
+    volumes:
+      # Hot reload - montar código fuente para desarrollo
+      - ./frontend-auth/src:/app/src:ro
+      - ./frontend-auth/public:/app/public:ro
+      - ./frontend-auth/index.html:/app/index.html:ro
+      - ./frontend-auth/vite.config.ts:/app/vite.config.ts:ro
+      - ./frontend-auth/tailwind.config.js:/app/tailwind.config.js:ro
+      - ./frontend-auth/postcss.config.js:/app/postcss.config.js:ro
+      # Excluir node_modules para mejor performance
+      - /app/node_modules
+    networks:
+      - gamc_network
+    depends_on:
+      - gamc-backend-go
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ========================================
+  # SERVICIOS DE ADMINISTRACIÓN (OPCIONAL)
+  # ========================================
+
+  # PgAdmin - Administración de PostgreSQL
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: gamc_pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@gamc.gov.bo
+      PGADMIN_DEFAULT_PASSWORD: admin123
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: 'False'
+    ports:
+      - "8080:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+      - ./database/pgadmin/servers.json:/pgadmin4/servers.json:ro
+    networks:
+      - gamc_network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles:
+      - admin
+
+  # Redis Commander - Interface web para Redis
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: gamc_redis_commander
+    restart: unless-stopped
+    environment:
+      REDIS_HOSTS: "GAMC Redis:redis:6379:0:gamc_redis_password_2024"
+      HTTP_USER: admin
+      HTTP_PASSWORD: admin123
+      PORT: 8081
+    ports:
+      - "8081:8081"
+    networks:
+      - gamc_network
+    depends_on:
+      redis:
+        condition: service_healthy
+    profiles:
+      - admin
+
+  # MinIO Client para configuración automática
+  minio-client:
+    image: minio/mc:latest
+    container_name: gamc_minio_client
+    restart: "no"
+    environment:
+      TZ: America/La_Paz
+    volumes:
+      - ./minio/scripts:/scripts:ro
+      - ./minio/config:/root/.mc
+    networks:
+      - gamc_network
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      echo 'Configurando MinIO Client...';
+      mc alias set gamc-local http://minio:9000 gamc_admin gamc_minio_password_2024;
+      echo 'Creando buckets necesarios...';
+      mc mb gamc-local/gamc-attachments --ignore-existing;
+      mc mb gamc-local/gamc-documents --ignore-existing;
+      mc mb gamc-local/gamc-images --ignore-existing;
+      mc mb gamc-local/gamc-backups --ignore-existing;
+      mc mb gamc-local/gamc-temp --ignore-existing;
+      mc mb gamc-local/gamc-reports --ignore-existing;
+      echo 'Configurando políticas de acceso...';
+      mc anonymous set download gamc-local/gamc-images;
+      mc anonymous set download gamc-local/gamc-documents;
+      echo 'Configuración completada.';
+      if [ -f /scripts/setup-buckets.sh ]; then
+        echo 'Ejecutando configuración adicional...';
+        chmod +x /scripts/setup-buckets.sh;
+        /scripts/setup-buckets.sh;
+      fi;
+      echo 'MinIO Client configurado exitosamente.';
+      "
+    profiles:
+      - setup
+
+  # Nginx Gateway (Opcional para desarrollo)
+  nginx-gateway:
+    image: nginx:alpine
+    container_name: gamc_nginx_gateway
+    restart: unless-stopped
+    ports:
+      - "8090:80"
+    volumes:
+      - ./minio/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./minio/nginx/html:/usr/share/nginx/html:ro
+    networks:
+      - gamc_network
+    depends_on:
+      - minio
+      - gamc-backend-go
+      - gamc-auth-frontend
+    profiles:
+      - gateway
+
+# ========================================
+# VOLÚMENES PERSISTENTES
+# ========================================
+
+volumes:
+  postgres_data:
+    driver: local
+    name: gamc_postgres_data
+  pgadmin_data:
+    driver: local
+    name: gamc_pgadmin_data
+  redis_data:
+    driver: local
+    name: gamc_redis_data
+  minio_data:
+    driver: local
+    name: gamc_minio_data
+
+# ========================================
+# REDES
+# ========================================
+
+networks:
+  gamc_network:
+    driver: bridge
+    name: gamc_network
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.20.0.0/16

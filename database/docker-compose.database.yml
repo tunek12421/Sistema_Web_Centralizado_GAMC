@@ -1,0 +1,72 @@
+version: '3.8'
+
+services:
+  # Base de datos PostgreSQL
+  postgres:
+    image: postgres:15-alpine
+    container_name: gamc_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: gamc_system
+      POSTGRES_USER: gamc_user
+      POSTGRES_PASSWORD: gamc_password_2024
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=es_BO.UTF-8"
+      TZ: America/La_Paz
+    ports:
+      - "5432:5432"
+    volumes:
+      # Scripts de inicialización
+      - ./init:/docker-entrypoint-initdb.d:ro
+      # Persistencia de datos
+      - postgres_data:/var/lib/postgresql/data
+      # Backups
+      - ./backups:/backups
+    networks:
+      - gamc_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gamc_user -d gamc_system"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Cliente de administración de PostgreSQL (opcional)
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: gamc_pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@gamc.gov.bo
+      PGADMIN_DEFAULT_PASSWORD: admin123
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: 'False'
+    ports:
+      - "8080:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+      - ./pgadmin/servers.json:/pgadmin4/servers.json:ro
+    networks:
+      - gamc_network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles:
+      - admin
+
+volumes:
+  postgres_data:
+    driver: local
+    name: gamc_postgres_data
+  pgadmin_data:
+    driver: local
+    name: gamc_pgadmin_data
+
+networks:
+  gamc_network:
+    driver: bridge
+    name: gamc_network

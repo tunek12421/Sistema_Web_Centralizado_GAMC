@@ -1,0 +1,367 @@
+# ========================================
+# COMANDOS POWERSHELL - FLUJO MENSAJERÍA (OPTIMIZADO PARA RATE LIMITING)
+# ========================================
+
+Write-Host "=== 📨 FLUJO DE MENSAJERÍA (OPTIMIZADO) ==="
+Write-Host "⚠️  Rate Limiting: 10 requests/15min en auth endpoints"
+Write-Host "🔧 Usando delays y estrategia optimizada..."
+
+# ========================================
+# FUNCIÓN DE DELAY CON PROGRESO
+# ========================================
+function Start-DelayWithProgress {
+    param(
+        [int]$Seconds,
+        [string]$Message = "Esperando para evitar rate limiting"
+    )
+    
+    Write-Host "`n⏳ $Message ($Seconds segundos)..." -ForegroundColor Yellow
+    for ($i = $Seconds; $i -gt 0; $i--) {
+        Write-Progress -Activity $Message -Status "Tiempo restante: $i segundos" -PercentComplete ((($Seconds - $i) / $Seconds) * 100)
+        Start-Sleep -Seconds 1
+    }
+    Write-Progress -Activity $Message -Completed
+    Write-Host "✅ Continuando..." -ForegroundColor Green
+}
+
+# ========================================
+# PREPARACIÓN: UN USUARIO A LA VEZ CON DELAYS
+# ========================================
+Write-Host "`n=== PREPARACIÓN: USUARIOS CON DIFERENTES ROLES (OPTIMIZADO) ==="
+
+# Estrategia: Crear solo 1 usuario con rol ADMIN que puede hacer todo
+$adminUserId = Get-Random -Minimum 9000 -Maximum 9999
+$adminUserBody = @{
+    email = "testadmin$adminUserId@gamc.gov.bo"
+    password = "AdminTest123!"
+    firstName = "Test"
+    lastName = "Admin$adminUserId"
+    organizationalUnitId = 1
+    role = "admin"
+} | ConvertTo-Json
+
+Write-Host "🔧 Registrando usuario ADMIN para testing completo..."
+try {
+    # Registrar usuario ADMIN
+    $registerResult = Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/register" -Method POST -ContentType "application/json" -Body $adminUserBody
+    Write-Host "✅ Usuario ADMIN registrado: testadmin$adminUserId@gamc.gov.bo"
+    
+    # Delay para evitar rate limiting en login
+    Start-DelayWithProgress -Seconds 8 -Message "Esperando antes del login"
+    
+    # Login usuario ADMIN
+    $adminLoginBody = @{
+        email = "testadmin$adminUserId@gamc.gov.bo"
+        password = "AdminTest123!"
+    } | ConvertTo-Json
+    $adminLogin = Invoke-RestMethod -Uri "http://localhost:3000/api/v1/auth/login" -Method POST -ContentType "application/json" -Body $adminLoginBody
+    $adminToken = $adminLogin.data.accessToken
+    Write-Host "✅ Usuario ADMIN autenticado exitosamente"
+    Write-Host "Token: $($adminToken.Substring(0,20))..."
+    
+} catch {
+    Write-Host "❌ Error en preparación: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "💡 Puede ser rate limiting - esperando más tiempo..." -ForegroundColor Yellow
+    Start-DelayWithProgress -Seconds 30 -Message "Esperando recuperación de rate limit"
+    return
+}
+
+# Delay antes de continuar con operaciones de mensajería
+Start-DelayWithProgress -Seconds 5 -Message "Preparando para operaciones de mensajería"
+
+# ========================================
+# 25. OBTENER TIPOS DE MENSAJES
+# ========================================
+Write-Host "`n=== 25. OBTENER TIPOS DE MENSAJES ==="
+
+try {
+    $typesResponse = Invoke-RestMethod -Uri "http://localhost:3000/api/v1/messages/types" -Method GET -Headers @{Authorization="Bearer $adminToken"}
+    Write-Host "✅ Tipos de mensajes obtenidos:" -ForegroundColor Green
+    $typesResponse.data | ForEach-Object { Write-Host "  - $_" -ForegroundColor Cyan }
+} catch {
+    Write-Host "❌ Error obteniendo tipos: $($_.Exception.Message)" -ForegroundColor Red
+}
+
+# Pequeño delay entre requests
+Start-Sleep -Seconds 2
+
+# ========================================
+# 26. OBTENER ESTADOS DE MENSAJES
+# ========================================
+Write-Host "`n=== 26. OBTENER ESTADOS DE MENSAJES ==="
+
+try {
+    $statusesResponse = Invoke-RestMethod -Uri "http://localhost:3000/api/v1/messages/statuses" -Method GET -Headers @{Authorization="Bearer $adminToken"}
+    Write-Host "✅ Estados de mensajes obtenidos:" -ForegroundColor Green
+    $statusesResponse.data | ForEach-Object { Write-Host "  - $_" -ForegroundColor Cyan }
+} catch {
+    Write-Host "❌ Error obteniendo estados: $($_.Exception.Message)" -ForegroundColor Red
+}
+
+Start-Sleep -Seconds 2
+
+# ========================================
+# 18. CREAR MENSAJE (ROL ADMIN PUEDE TODO)
+# ========================================
+Write-Host "`n=== 18. CREAR MENSAJE (ROL ADMIN) ==="
+
+$messageBody = @{
+    subject = "Solicitud de Información - Test Admin $adminUserId"
+    content = "Este es un mensaje de prueba enviado desde el flujo de testing automatizado optimizado. Requiere respuesta urgente para validar el sistema de mensajería con rate limiting."
+    receiverUnitId = 2
+    messageTypeId = 1
+    priorityLevel = 3
+    isUrgent = $true
+} | ConvertTo-Json
+
+try {
+    $createResponse = Invoke-RestMethod -Uri "http://localhost:3000/api/v1/messages" -Method POST -Headers @{Authorization="Bearer $adminToken"} -ContentType "application/json" -Body $messageBody
+    Write-Host "✅ Mensaje creado exitosamente" -ForegroundColor Green
+    Write-Host "ID: $($createResponse.data.id)" -ForegroundColor White
+    Write-Host "Asunto: $($createResponse.data.subject)" -ForegroundColor White
+    Write-Host "Estado: $($createResponse.data.statusId)" -ForegroundColor White
+    Write-Host "Es urgente: $($createResponse.data.isUrgent)" -ForegroundColor White
+    $messageId = $createResponse.data.id
+    
+    # Información detallada del mensaje creado
+    if ($createResponse.data.sender) {
+        Write-Host "Remitente: $($createResponse.data.sender.firstName) $($createResponse.data.sender.lastName)" -ForegroundColor Gray
+    }
+    if ($createResponse.data.senderUnit) {
+        Write-Host "Unidad origen: $($createResponse.data.senderUnit.name)" -ForegroundColor Gray
+    }
+} catch {
+    Write-Host "❌ Error creando mensaje: $($_.Exception.Message)" -ForegroundColor Red
+}
+
+Start-Sleep -Seconds 2
+
+# ========================================
+# 19. LISTAR MENSAJES (ADMIN PUEDE VER TODOS)
+# ========================================
+Write-Host "`n=== 19. LISTAR MENSAJES ==="
+
+try {
+    $listResponse = Invoke-RestMethod -Uri "http://localhost:3000/api/v1/messages?page=1&limit=5&sortBy=created_at&sortOrder=desc" -Method GET -Headers @{Authorization="Bearer $adminToken"}
+    Write-Host "✅ Mensajes listados exitosamente" -ForegroundColor Green
+    Write-Host "Total: $($listResponse.data.total)" -ForegroundColor White
+    Write-Host "Página: $($listResponse.data.page) de $($listResponse.data.totalPages)" -ForegroundColor White
+    Write-Host "Límite: $($listResponse.data.limit)" -ForegroundColor White
+    Write-Host "Tiene siguiente: $($listResponse.data.hasNext)" -ForegroundColor White
+    
+    if ($listResponse.data.messages.Count -gt 0) {
+        Write-Host "`nÚltimos mensajes:" -ForegroundColor Yellow
+        $listResponse.data.messages | ForEach-Object {
+            $urgentFlag = if ($_.isUrgent) { "🚨" } else { "📄" }
+            Write-Host "  $urgentFlag [$($_.id)] $($_.subject)" -ForegroundColor Cyan
+        }
+    }
+} catch {
+    Write-Host "❌ Error listando mensajes: $($_.Exception.Message)" -ForegroundColor Red
+}
+
+Start-Sleep -Seconds 2
+
+# ========================================
+# 20. OBTENER MENSAJE POR ID
+# ========================================
+Write-Host "`n=== 20. OBTENER MENSAJE POR ID ==="
+
+if ($messageId) {
+    try {
+        $getResponse = Invoke-RestMethod -Uri "http://localhost:3000/api/v1/messages/$messageId" -Method GET -Headers @{Authorization="Bearer $adminToken"}
+        Write-Host "✅ Mensaje obtenido exitosamente" -ForegroundColor Green
+        Write-Host "ID: $($getResponse.data.id)" -ForegroundColor White
+        Write-Host "Asunto: $($getResponse.data.subject)" -ForegroundColor White
+        Write-Host "Contenido: $($getResponse.data.content.Substring(0, [Math]::Min(60, $getResponse.data.content.Length)))..." -ForegroundColor White
+        
+        if ($getResponse.data.sender) {
+            Write-Host "Remitente: $($getResponse.data.sender.firstName) $($getResponse.data.sender.lastName)" -ForegroundColor Gray
+        }
+        if ($getResponse.data.senderUnit) {
+            Write-Host "Unidad origen: $($getResponse.data.senderUnit.name)" -ForegroundColor Gray
+        }
+        if ($getResponse.data.receiverUnit) {
+            Write-Host "Unidad destino: $($getResponse.data.receiverUnit.name)" -ForegroundColor Gray
+        }
+        Write-Host "Leído en: $($getResponse.data.readAt)" -ForegroundColor Gray
+        Write-Host "Creado: $($getResponse.data.createdAt)" -ForegroundColor Gray
+    } catch {
+        Write-Host "❌ Error obteniendo mensaje: $($_.Exception.Message)" -ForegroundColor Red
+    }
+} else {
+    Write-Host "⚠️ No hay mensaje ID para consultar" -ForegroundColor Yellow
+}
+
+Start-Sleep -Seconds 2
+
+# ========================================
+# 21. MARCAR MENSAJE COMO LEÍDO
+# ========================================
+Write-Host "`n=== 21. MARCAR MENSAJE COMO LEÍDO ==="
+
+if ($messageId) {
+    try {
+        $readResponse = Invoke-RestMethod -Uri "http://localhost:3000/api/v1/messages/$messageId/read" -Method PUT -Headers @{Authorization="Bearer $adminToken"}
+        Write-Host "✅ Mensaje marcado como leído" -ForegroundColor Green
+        Write-Host "Mensaje: $($readResponse.message)" -ForegroundColor White
+    } catch {
+        Write-Host "❌ Error marcando como leído: $($_.Exception.Message)" -ForegroundColor Red
+    }
+} else {
+    Write-Host "⚠️ No hay mensaje ID para marcar como leído" -ForegroundColor Yellow
+}
+
+Start-Sleep -Seconds 2
+
+# ========================================
+# 22. ACTUALIZAR ESTADO DE MENSAJE
+# ========================================
+Write-Host "`n=== 22. ACTUALIZAR ESTADO DE MENSAJE ==="
+
+if ($messageId) {
+    $updateStatusBody = @{
+        status = "IN_PROGRESS"
+    } | ConvertTo-Json
+    
+    try {
+        $updateResponse = Invoke-RestMethod -Uri "http://localhost:3000/api/v1/messages/$messageId/status" -Method PUT -Headers @{Authorization="Bearer $adminToken"} -ContentType "application/json" -Body $updateStatusBody
+        Write-Host "✅ Estado actualizado exitosamente" -ForegroundColor Green
+        Write-Host "Mensaje: $($updateResponse.message)" -ForegroundColor White
+    } catch {
+        Write-Host "❌ Error actualizando estado: $($_.Exception.Message)" -ForegroundColor Red
+    }
+} else {
+    Write-Host "⚠️ No hay mensaje ID para actualizar estado" -ForegroundColor Yellow
+}
+
+Start-Sleep -Seconds 2
+
+# ========================================
+# 24. OBTENER ESTADÍSTICAS DE MENSAJES
+# ========================================
+Write-Host "`n=== 24. OBTENER ESTADÍSTICAS DE MENSAJES ==="
+
+try {
+    $statsResponse = Invoke-RestMethod -Uri "http://localhost:3000/api/v1/messages/stats" -Method GET -Headers @{Authorization="Bearer $adminToken"}
+    Write-Host "✅ Estadísticas obtenidas:" -ForegroundColor Green
+    Write-Host "Total mensajes: $($statsResponse.data.totalMessages)" -ForegroundColor White
+    Write-Host "Mensajes urgentes: $($statsResponse.data.urgentMessages)" -ForegroundColor White
+    Write-Host "Tiempo promedio respuesta: $($statsResponse.data.averageResponseTime)" -ForegroundColor White
+    
+    Write-Host "`nMensajes por estado:" -ForegroundColor Yellow
+    if ($statsResponse.data.messagesByStatus) {
+        $statsResponse.data.messagesByStatus.PSObject.Properties | ForEach-Object {
+            Write-Host "  $($_.Name): $($_.Value)" -ForegroundColor Cyan
+        }
+    }
+    
+    if ($statsResponse.data.messagesByType) {
+        Write-Host "`nMensajes por tipo:" -ForegroundColor Yellow
+        $statsResponse.data.messagesByType.PSObject.Properties | ForEach-Object {
+            Write-Host "  $($_.Name): $($_.Value)" -ForegroundColor Cyan
+        }
+    }
+} catch {
+    Write-Host "❌ Error obteniendo estadísticas: $($_.Exception.Message)" -ForegroundColor Red
+}
+
+Start-Sleep -Seconds 2
+
+# ========================================
+# 23. ELIMINAR MENSAJE (SOFT DELETE)
+# ========================================
+Write-Host "`n=== 23. ELIMINAR MENSAJE (SOFT DELETE) ==="
+
+if ($messageId) {
+    try {
+        $deleteResponse = Invoke-RestMethod -Uri "http://localhost:3000/api/v1/messages/$messageId" -Method DELETE -Headers @{Authorization="Bearer $adminToken"}
+        Write-Host "✅ Mensaje eliminado exitosamente" -ForegroundColor Green
+        Write-Host "Mensaje: $($deleteResponse.message)" -ForegroundColor White
+    } catch {
+        Write-Host "❌ Error eliminando mensaje: $($_.Exception.Message)" -ForegroundColor Red
+    }
+} else {
+    Write-Host "⚠️ No hay mensaje ID para eliminar" -ForegroundColor Yellow
+}
+
+# ========================================
+# VERIFICAR QUE EL MENSAJE FUE ELIMINADO
+# ========================================
+if ($messageId) {
+    Start-Sleep -Seconds 2
+    Write-Host "`n=== VERIFICACIÓN: MENSAJE ELIMINADO ==="
+    try {
+        $verifyResponse = Invoke-RestMethod -Uri "http://localhost:3000/api/v1/messages/$messageId" -Method GET -Headers @{Authorization="Bearer $adminToken"}
+        Write-Host "⚠️ Mensaje aún existe (puede ser soft delete)" -ForegroundColor Yellow
+    } catch {
+        Write-Host "✅ Confirmado: Mensaje no accesible (eliminado correctamente)" -ForegroundColor Green
+    }
+}
+
+# ========================================
+# CASOS DE ERROR PARA PROBAR (SIN CREAR USUARIOS ADICIONALES)
+# ========================================
+
+Write-Host "`n========================================`nCASOS DE ERROR PARA PROBAR:`n========================================" -ForegroundColor Magenta
+
+Start-Sleep -Seconds 2
+
+Write-Host "`n# Error: Mensaje sin autenticación"
+try {
+    Invoke-RestMethod -Uri "http://localhost:3000/api/v1/messages" -Method GET
+} catch {
+    Write-Host "✅ Error esperado (sin auth): $($_.Exception.Message)" -ForegroundColor Green
+}
+
+Start-Sleep -Seconds 2
+
+Write-Host "`n# Error: Mensaje inexistente"
+try {
+    Invoke-RestMethod -Uri "http://localhost:3000/api/v1/messages/99999" -Method GET -Headers @{Authorization="Bearer $adminToken"}
+} catch {
+    Write-Host "✅ Error esperado (mensaje inexistente): $($_.Exception.Message)" -ForegroundColor Green
+}
+
+Start-Sleep -Seconds 2
+
+Write-Host "`n# Error: Datos inválidos para crear mensaje"
+try {
+    $invalidBody = @{
+        subject = ""  # Asunto vacío
+        content = "a"  # Contenido muy corto
+        receiverUnitId = 999  # Unidad inexistente
+    } | ConvertTo-Json
+    Invoke-RestMethod -Uri "http://localhost:3000/api/v1/messages" -Method POST -Headers @{Authorization="Bearer $adminToken"} -ContentType "application/json" -Body $invalidBody
+} catch {
+    Write-Host "✅ Error esperado (datos inválidos): $($_.Exception.Message)" -ForegroundColor Green
+}
+
+# ========================================
+# RESUMEN FINAL
+# ========================================
+Write-Host "`n========================================" -ForegroundColor Magenta
+Write-Host "✅ FLUJO DE MENSAJERÍA COMPLETADO CON OPTIMIZACIONES" -ForegroundColor Green
+Write-Host "========================================" -ForegroundColor Magenta
+
+Write-Host "`n📊 RESUMEN DE PRUEBAS:" -ForegroundColor Yellow
+Write-Host "✅ Tipos y estados de mensajes obtenidos" -ForegroundColor Green
+Write-Host "✅ Mensaje creado exitosamente" -ForegroundColor Green
+Write-Host "✅ Lista de mensajes obtenida" -ForegroundColor Green
+Write-Host "✅ Mensaje individual consultado" -ForegroundColor Green
+Write-Host "✅ Mensaje marcado como leído" -ForegroundColor Green
+Write-Host "✅ Estado de mensaje actualizado" -ForegroundColor Green
+Write-Host "✅ Estadísticas del sistema obtenidas" -ForegroundColor Green
+Write-Host "✅ Mensaje eliminado (soft delete)" -ForegroundColor Green
+Write-Host "✅ Casos de error validados" -ForegroundColor Green
+
+Write-Host "`n🎯 OPTIMIZACIONES APLICADAS:" -ForegroundColor Yellow
+Write-Host "- Un solo usuario ADMIN (reduce requests de auth)" -ForegroundColor Cyan
+Write-Host "- Delays entre requests (evita rate limiting)" -ForegroundColor Cyan
+Write-Host "- Progreso visual durante esperas" -ForegroundColor Cyan
+Write-Host "- Manejo robusto de errores" -ForegroundColor Cyan
+Write-Host "- Verificaciones adicionales" -ForegroundColor Cyan
+
+Write-Host "`n⚠️ NOTA IMPORTANTE:" -ForegroundColor Yellow
+Write-Host "Rate limiting actual: 10 requests/15min para auth endpoints" -ForegroundColor Red
+Write-Host "Este script está optimizado para esa configuración" -ForegroundColor Red

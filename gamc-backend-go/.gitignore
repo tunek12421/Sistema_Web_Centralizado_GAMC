@@ -1,0 +1,64 @@
+# Binarios de Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+main
+gamc-backend-go
+
+# Archivos de test
+*.test
+*.out
+
+# Dependencias de Go
+/vendor/
+#go.sum
+
+# Archivos de configuración local
+.env
+.env.local
+.env.production
+
+# Logs
+*.log
+logs/
+
+# Directorio de builds
+/dist/
+/build/
+/bin/
+
+# IDEs y editores
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS específicos
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Archivos temporales
+*.tmp
+*.temp
+.cache/
+
+# Coverage y testing
+*.cover
+coverage.out
+coverage.html
+
+# Archivos de Docker
+.dockerignore
+docker-compose.override.yml
+
+# Archivos de backup
+*.bak
+*.backup
+
+# Directorios de módulos locales
+vendor/
