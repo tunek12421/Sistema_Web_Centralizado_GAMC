@@ -14,17 +14,19 @@ interface MessageFormProps {
   onCancel: () => void;
 }
 
+// 🔧 NUEVA INTERFAZ para unidades organizacionales
 interface OrganizationalUnit {
   id: number;
   name: string;
   code: string;
+  isActive: boolean;
 }
 
 const MessageForm: React.FC<MessageFormProps> = ({ onSuccess, onCancel }) => {
   const [formData, setFormData] = useState<CreateMessageRequest>({
     subject: '',
     content: '',
-    receiverUnitId: 0,
+    receiverUnitId: 0, // 🔧 CAMBIADO: Inicializar en 0 hasta cargar las unidades
     messageTypeId: 1,
     priorityLevel: 1,
     isUrgent: false
@@ -36,16 +38,55 @@ const MessageForm: React.FC<MessageFormProps> = ({ onSuccess, onCancel }) => {
   const [messageTypes, setMessageTypes] = useState<string[]>([]);
   const [loadingTypes, setLoadingTypes] = useState(true);
 
-  // Unidades organizacionales disponibles (estas deberían venir de una API)
-  const organizationalUnits: OrganizationalUnit[] = [
-    { id: 1, name: 'Administración', code: 'ADM' },
-    { id: 2, name: 'Obras Públicas', code: 'OBR' },
-    { id: 3, name: 'Monitoreo', code: 'MON' },
-    { id: 4, name: 'Movilidad Urbana', code: 'MOV' },
-    { id: 5, name: 'Gobierno Electrónico', code: 'GOB' },
-    { id: 6, name: 'Prensa e Imagen', code: 'PRE' },
-    { id: 7, name: 'Tecnología', code: 'TEC' }
-  ];
+  // 🔧 NUEVO: Estados para unidades organizacionales dinámicas
+  const [organizationalUnits, setOrganizationalUnits] = useState<OrganizationalUnit[]>([]);
+  const [loadingUnits, setLoadingUnits] = useState(true);
+
+  // 🔧 NUEVO: useEffect para cargar unidades organizacionales
+  useEffect(() => {
+    const loadOrganizationalUnits = async () => {
+      try {
+        setLoadingUnits(true);
+        
+        console.log('🔄 Cargando unidades organizacionales para mensajes...');
+        const response = await fetch('http://localhost:3000/api/v1/organizational-units');
+        const result = await response.json();
+        
+        if (response.ok && result.success && result.data) {
+          console.log('✅ Unidades cargadas para mensajes:', result.data);
+          setOrganizationalUnits(result.data);
+        } else {
+          // 🔧 FALLBACK: Usar datos hardcodeados con IDs correctos
+          const fallbackUnits = [
+            { id: 1, name: 'Obras Públicas', code: 'OBRAS_PUBLICAS', isActive: true },
+            { id: 2, name: 'Monitoreo', code: 'MONITOREO', isActive: true },
+            { id: 3, name: 'Movilidad Urbana', code: 'MOVILIDAD_URBANA', isActive: true },
+            { id: 4, name: 'Gobierno Electrónico', code: 'GOBIERNO_ELECTRONICO', isActive: true },
+            { id: 5, name: 'Prensa e Imagen', code: 'PRENSA_IMAGEN', isActive: true },
+            { id: 6, name: 'Tecnología', code: 'TECNOLOGIA', isActive: true },
+            { id: 7, name: 'Administración', code: 'ADMINISTRACION', isActive: true }
+          ];
+          setOrganizationalUnits(fallbackUnits);
+        }
+      } catch (error) {
+        // 🔧 FALLBACK: Usar datos hardcodeados con IDs correctos
+        const fallbackUnits = [
+          { id: 1, name: 'Obras Públicas', code: 'OBRAS_PUBLICAS', isActive: true },
+          { id: 2, name: 'Monitoreo', code: 'MONITOREO', isActive: true },
+          { id: 3, name: 'Movilidad Urbana', code: 'MOVILIDAD_URBANA', isActive: true },
+          { id: 4, name: 'Gobierno Electrónico', code: 'GOBIERNO_ELECTRONICO', isActive: true },
+          { id: 5, name: 'Prensa e Imagen', code: 'PRENSA_IMAGEN', isActive: true },
+          { id: 6, name: 'Tecnología', code: 'TECNOLOGIA', isActive: true },
+          { id: 7, name: 'Administración', code: 'ADMINISTRACION', isActive: true }
+        ];
+        setOrganizationalUnits(fallbackUnits);
+      } finally {
+        setLoadingUnits(false);
+      }
+    };
+
+    loadOrganizationalUnits();
+  }, []);
 
   // Cargar tipos de mensajes al montar
   useEffect(() => {
@@ -55,7 +96,7 @@ const MessageForm: React.FC<MessageFormProps> = ({ onSuccess, onCancel }) => {
   // Validaciones en tiempo real
   useEffect(() => {
     validateForm();
-  }, [formData]);
+  }, [formData, organizationalUnits]);
 
   // Cargar tipos de mensajes
   const loadMessageTypes = async () => {
@@ -128,7 +169,7 @@ const MessageForm: React.FC<MessageFormProps> = ({ onSuccess, onCancel }) => {
       };
     }
 
-    // Validar unidad receptora
+    // 🔧 ACTUALIZADO: Validar unidad receptora usando datos dinámicos
     if (formData.receiverUnitId === 0) {
       newValidation.receiverUnitId = {
         isValid: false,
@@ -139,7 +180,7 @@ const MessageForm: React.FC<MessageFormProps> = ({ onSuccess, onCancel }) => {
       const unit = organizationalUnits.find(u => u.id === formData.receiverUnitId);
       newValidation.receiverUnitId = {
         isValid: true,
-        message: `✓ Destinatario: ${unit?.name}`,
+        message: `✓ Destinatario: ${unit?.name || 'Unidad válida'}`,
         type: 'success'
       };
     }
@@ -168,7 +209,8 @@ const MessageForm: React.FC<MessageFormProps> = ({ onSuccess, onCancel }) => {
     return Object.values(validation).every(v => v.isValid) &&
            formData.subject.trim() &&
            formData.content.trim() &&
-           formData.receiverUnitId > 0;
+           formData.receiverUnitId > 0 &&
+           !loadingUnits; // 🔧 NUEVO: No permitir envío mientras se cargan las unidades
   };
 
   // Manejar cambios en el formulario
@@ -192,6 +234,11 @@ const MessageForm: React.FC<MessageFormProps> = ({ onSuccess, onCancel }) => {
     setMessage('');
 
     try {
+      // 🔧 NUEVO: Log de datos antes de enviar para debugging
+      console.log('🔄 Enviando mensaje con datos:', formData);
+      const selectedUnit = organizationalUnits.find(u => u.id === formData.receiverUnitId);
+      console.log('📍 Unidad seleccionada:', selectedUnit);
+      
       const createdMessage = await messageService.createMessage(formData);
       
       setMessage('✅ Mensaje enviado exitosamente');
@@ -294,7 +341,7 @@ const MessageForm: React.FC<MessageFormProps> = ({ onSuccess, onCancel }) => {
             <FieldValidationMessage validation={validation.subject} />
           </div>
 
-          {/* Unidad destinataria */}
+          {/* 🔧 ACTUALIZADO: Unidad destinataria dinámica */}
           <div>
             <label htmlFor="receiverUnitId" className="block text-sm font-medium text-gray-700 mb-2">
               Unidad destinataria *
@@ -304,14 +351,31 @@ const MessageForm: React.FC<MessageFormProps> = ({ onSuccess, onCancel }) => {
               value={formData.receiverUnitId}
               onChange={(e) => handleInputChange('receiverUnitId', parseInt(e.target.value))}
               className={getInputClasses('receiverUnitId')}
+              disabled={loadingUnits}
             >
-              <option value={0}>Seleccione una unidad</option>
+              <option value={0}>
+                {loadingUnits ? '🔄 Cargando unidades...' : 'Seleccione una unidad'}
+              </option>
               {organizationalUnits.map(unit => (
                 <option key={unit.id} value={unit.id}>
                   {unit.name} ({unit.code})
                 </option>
               ))}
             </select>
+            
+            {/* 🔧 NUEVO: Mostrar estado de carga */}
+            {loadingUnits && (
+              <p className="text-xs text-blue-600 mt-1">
+                🔄 Cargando unidades organizacionales...
+              </p>
+            )}
+            
+            {!loadingUnits && organizationalUnits.length > 0 && (
+              <p className="text-xs text-gray-500 mt-1">
+                ✅ {organizationalUnits.length} unidades disponibles
+              </p>
+            )}
+            
             <FieldValidationMessage validation={validation.receiverUnitId} />
           </div>
 
@@ -416,6 +480,12 @@ const MessageForm: React.FC<MessageFormProps> = ({ onSuccess, onCancel }) => {
               <p className="text-sm text-gray-700 whitespace-pre-wrap">
                 {formData.content}
               </p>
+              {/* 🔧 NUEVO: Mostrar unidad de destino en preview */}
+              {formData.receiverUnitId > 0 && (
+                <div className="mt-2 pt-2 border-t text-xs text-gray-500">
+                  📍 Destinatario: {organizationalUnits.find(u => u.id === formData.receiverUnitId)?.name}
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -440,6 +510,11 @@ const MessageForm: React.FC<MessageFormProps> = ({ onSuccess, onCancel }) => {
                 <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
                 Enviando...
               </>
+            ) : loadingUnits ? (
+              <>
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                Cargando...
+              </>
             ) : (
               <>
                 <span className="mr-2">📤</span>
@@ -448,6 +523,19 @@ const MessageForm: React.FC<MessageFormProps> = ({ onSuccess, onCancel }) => {
             )}
           </button>
         </div>
+        
+        {/* 🔧 NUEVO: Mensaje informativo mientras se carga */}
+        {loadingUnits && (
+          <p className="text-xs text-center text-gray-500 mt-2">
+            Cargando información de unidades organizacionales...
+          </p>
+        )}
+        
+        {!isFormValid() && !loadingUnits && (
+          <p className="text-xs text-center text-gray-500 mt-2">
+            Complete todos los campos correctamente para enviar el mensaje
+          </p>
+        )}
       </form>
     </div>
   );
