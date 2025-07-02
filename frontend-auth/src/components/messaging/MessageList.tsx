@@ -33,9 +33,18 @@ const MessageList: React.FC<MessageListProps> = ({
   const [urgentFilter, setUrgentFilter] = useState<string>('');
   const [messageTypes, setMessageTypes] = useState<string[]>([]);
   const [messageStatuses, setMessageStatuses] = useState<string[]>([]);
+  
+  // ✨ NUEVO - Estado del usuario actual
+  const [currentUser, setCurrentUser] = useState<any>(null);
 
   // Cargar datos iniciales
   useEffect(() => {
+    // ✨ NUEVO - Cargar datos del usuario actual
+    const userData = localStorage.getItem('user');
+    if (userData) {
+      setCurrentUser(JSON.parse(userData));
+    }
+    
     loadMessageTypes();
     loadMessageStatuses();
   }, []);
@@ -131,6 +140,33 @@ const MessageList: React.FC<MessageListProps> = ({
       ));
     } catch (err: any) {
       console.error('Error marking as read:', err);
+    }
+  };
+
+  // ✨ NUEVA FUNCIÓN - Determinar si es mensaje enviado o recibido
+  const isMessageSent = (message: Message): boolean => {
+    return currentUser && message.sender.id === currentUser.id;
+  };
+
+  // ✨ NUEVA FUNCIÓN - Obtener información de dirección del mensaje
+  const getMessageDirection = (message: Message) => {
+    if (isMessageSent(message)) {
+      return {
+        direction: 'sent',
+        label: 'Para',
+        unitName: message.receiverUnit.name,
+        unitCode: message.receiverUnit.code,
+        icon: '📤'
+      };
+    } else {
+      return {
+        direction: 'received',
+        label: 'De',
+        unitName: message.senderUnit.name,
+        unitCode: message.senderUnit.code,
+        personName: `${message.sender.firstName} ${message.sender.lastName}`,
+        icon: '📥'
+      };
     }
   };
 
@@ -260,66 +296,79 @@ const MessageList: React.FC<MessageListProps> = ({
             <p>Los mensajes aparecerán aquí cuando los reciba</p>
           </div>
         ) : (
-          messages.map((message) => (
-            <div
-              key={message.id}
-              onClick={() => onMessageSelect(message)}
-              className={`p-4 hover:bg-gray-50 cursor-pointer transition-colors ${
-                getPriorityClass(message.priorityLevel, message.isUrgent)
-              } ${!message.readAt ? 'font-semibold' : ''}`}
-            >
-              <div className="flex items-start justify-between">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center mb-2">
-                    {message.isUrgent && (
-                      <span className="text-red-600 mr-2 text-sm font-bold">🚨 URGENTE</span>
-                    )}
-                    <h3 className="text-sm font-medium text-gray-900 truncate">
-                      {message.subject}
-                    </h3>
-                  </div>
-                  
-                  <p className="text-sm text-gray-600 mb-2 line-clamp-2">
-                    {message.content}
-                  </p>
-                  
-                  <div className="flex items-center text-xs text-gray-500">
-                    <span>De: {message.sender.firstName} {message.sender.lastName}</span>
-                    <span className="mx-2">•</span>
-                    <span>{message.senderUnit.name}</span>
-                    <span className="mx-2">•</span>
-                    <span>{formatDate(message.createdAt)}</span>
-                  </div>
-                </div>
-
-                <div className="flex items-center ml-4">
-                  <div className="text-right mr-3">
-                    <div className="flex items-center text-sm text-gray-600">
-                      <span className="mr-1">
-                        {getStatusIcon(message.status.name)}
+          messages.map((message) => {
+            // ✨ NUEVO - Obtener información de dirección
+            const messageDirection = getMessageDirection(message);
+            
+            return (
+              <div
+                key={message.id}
+                onClick={() => onMessageSelect(message)}
+                className={`p-4 hover:bg-gray-50 cursor-pointer transition-colors ${
+                  getPriorityClass(message.priorityLevel, message.isUrgent)
+                } ${!message.readAt && !isMessageSent(message) ? 'font-semibold' : ''}`}
+              >
+                <div className="flex items-start justify-between">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center mb-2">
+                      {/* ✨ NUEVO - Indicador de dirección */}
+                      <span className="text-sm text-gray-600 mr-2">
+                        {messageDirection.icon}
                       </span>
-                      <span>{message.status.name}</span>
+                      
+                      {message.isUrgent && (
+                        <span className="text-red-600 mr-2 text-sm font-bold">🚨 URGENTE</span>
+                      )}
+                      <h3 className="text-sm font-medium text-gray-900 truncate">
+                        {message.subject}
+                      </h3>
                     </div>
                     
-                    {!message.readAt && (
-                      <button
-                        onClick={(e) => handleMarkAsRead(message, e)}
-                        className="text-xs text-blue-600 hover:text-blue-800 mt-1"
-                      >
-                        Marcar como leído
-                      </button>
-                    )}
+                    <p className="text-sm text-gray-600 mb-2 line-clamp-2">
+                      {message.content}
+                    </p>
+                    
+                    <div className="flex items-center text-xs text-gray-500">
+                      {/* ✨ CORREGIDO - Mostrar dirección correcta */}
+                      <span>
+                        {messageDirection.label}: {messageDirection.unitName}
+                        {messageDirection.personName && ` (${messageDirection.personName})`}
+                      </span>
+                      <span className="mx-2">•</span>
+                      <span>{formatDate(message.createdAt)}</span>
+                    </div>
                   </div>
-                  
-                  <div className="text-gray-400">
-                    <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
-                    </svg>
+
+                  <div className="flex items-center ml-4">
+                    <div className="text-right mr-3">
+                      <div className="flex items-center text-sm text-gray-600">
+                        <span className="mr-1">
+                          {getStatusIcon(message.status.name)}
+                        </span>
+                        <span>{message.status.name}</span>
+                      </div>
+                      
+                      {/* ✨ CORREGIDO - Solo mostrar "marcar como leído" para mensajes recibidos no leídos */}
+                      {!message.readAt && !isMessageSent(message) && (
+                        <button
+                          onClick={(e) => handleMarkAsRead(message, e)}
+                          className="text-xs text-blue-600 hover:text-blue-800 mt-1"
+                        >
+                          Marcar como leído
+                        </button>
+                      )}
+                    </div>
+                    
+                    <div className="text-gray-400">
+                      <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
+                      </svg>
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
-          ))
+            );
+          })
         )}
 
         {loading && messages.length > 0 && (

@@ -22,13 +22,21 @@ interface RegisterFormProps {
   onBack: () => void;
 }
 
+// 🔧 NUEVA INTERFAZ para unidades organizacionales
+interface OrganizationalUnit {
+  id: number;
+  name: string;
+  code: string;
+  isActive: boolean;
+}
+
 const RegisterForm: React.FC<RegisterFormProps> = ({ onRegistrationSuccess, onBack }) => {
   const [registerData, setRegisterData] = useState({
     email: '',
     password: '',
     firstName: '',
     lastName: '',
-    organizationalUnitId: 1
+    organizationalUnitId: 0 // 🔧 CAMBIADO: Inicializar en 0 hasta cargar las unidades
   });
 
   // Estados para preguntas de seguridad
@@ -45,16 +53,65 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onRegistrationSuccess, onBa
   const [securityValidation, setSecurityValidation] = useState<{[key: string]: FieldValidation}>({});
   const [isFormValid, setIsFormValid] = useState(false);
 
-  // Unidades organizacionales
-  const units = [
-    { id: 1, name: 'Administración' },
-    { id: 2, name: 'Obras Públicas' },
-    { id: 3, name: 'Monitoreo' },
-    { id: 4, name: 'Movilidad Urbana' },
-    { id: 5, name: 'Gobierno Electrónico' },
-    { id: 6, name: 'Prensa e Imagen' },
-    { id: 7, name: 'Tecnología' }
-  ];
+  // 🔧 NUEVO: Estados para unidades organizacionales dinámicas
+  const [units, setUnits] = useState<OrganizationalUnit[]>([]);
+  const [loadingUnits, setLoadingUnits] = useState(true);
+
+  // 🔧 NUEVO: useEffect para cargar unidades organizacionales
+  useEffect(() => {
+    const loadOrganizationalUnits = async () => {
+      try {
+        setLoadingUnits(true);
+        
+        console.log('🔄 Cargando unidades organizacionales...');
+        const response = await fetch('http://localhost:3000/api/v1/organizational-units');
+        const result = await response.json();
+        
+        if (response.ok && result.success && result.data) {
+          console.log('✅ Unidades cargadas:', result.data);
+          setUnits(result.data);
+          
+          // 🔧 NUEVO: Configurar la primera unidad como valor por defecto
+          if (result.data.length > 0) {
+            setRegisterData(prev => ({ 
+              ...prev, 
+              organizationalUnitId: result.data[0].id 
+            }));
+          }
+        } else {
+          // 🔧 FALLBACK: Usar datos hardcodeados con IDs correctos (sin mostrar error)
+          const fallbackUnits = [
+            { id: 1, name: 'Obras Públicas', code: 'OBRAS_PUBLICAS', isActive: true },
+            { id: 2, name: 'Monitoreo', code: 'MONITOREO', isActive: true },
+            { id: 3, name: 'Movilidad Urbana', code: 'MOVILIDAD_URBANA', isActive: true },
+            { id: 4, name: 'Gobierno Electrónico', code: 'GOBIERNO_ELECTRONICO', isActive: true },
+            { id: 5, name: 'Prensa e Imagen', code: 'PRENSA_IMAGEN', isActive: true },
+            { id: 6, name: 'Tecnología', code: 'TECNOLOGIA', isActive: true },
+            { id: 7, name: 'Administración', code: 'ADMINISTRACION', isActive: true }
+          ];
+          setUnits(fallbackUnits);
+          setRegisterData(prev => ({ ...prev, organizationalUnitId: fallbackUnits[0].id }));
+        }
+      } catch (error) {
+        // 🔧 FALLBACK: Usar datos hardcodeados con IDs correctos (sin mostrar error)
+        const fallbackUnits = [
+          { id: 1, name: 'Obras Públicas', code: 'OBRAS_PUBLICAS', isActive: true },
+          { id: 2, name: 'Monitoreo', code: 'MONITOREO', isActive: true },
+          { id: 3, name: 'Movilidad Urbana', code: 'MOVILIDAD_URBANA', isActive: true },
+          { id: 4, name: 'Gobierno Electrónico', code: 'GOBIERNO_ELECTRONICO', isActive: true },
+          { id: 5, name: 'Prensa e Imagen', code: 'PRENSA_IMAGEN', isActive: true },
+          { id: 6, name: 'Tecnología', code: 'TECNOLOGIA', isActive: true },
+          { id: 7, name: 'Administración', code: 'ADMINISTRACION', isActive: true }
+        ];
+        setUnits(fallbackUnits);
+        setRegisterData(prev => ({ ...prev, organizationalUnitId: fallbackUnits[0].id }));
+      } finally {
+        setLoadingUnits(false);
+      }
+    };
+
+    loadOrganizationalUnits();
+  }, []);
 
   // Cargar preguntas de seguridad disponibles
   const loadSecurityQuestions = async () => {
@@ -239,7 +296,7 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onRegistrationSuccess, onBa
     return securityQuestions.filter(q => !selectedIds.includes(q.id));
   };
 
-  // Validaciones en tiempo real para registro
+  // 🔧 ACTUALIZADO: Validaciones que incluyen verificación de unidad organizacional
   useEffect(() => {
     const validations: {[key: string]: FieldValidation} = {};
     
@@ -247,6 +304,21 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onRegistrationSuccess, onBa
     validations.lastName = validateName(registerData.lastName, 'Apellido');
     validations.email = validateEmail(registerData.email);
     validations.password = validatePassword(registerData.password);
+    
+    // 🔧 NUEVO: Validar unidad organizacional
+    if (registerData.organizationalUnitId === 0) {
+      validations.organizationalUnit = {
+        isValid: false,
+        message: 'Seleccione una unidad organizacional',
+        type: 'error'
+      };
+    } else {
+      validations.organizationalUnit = {
+        isValid: true,
+        message: '✓ Unidad seleccionada',
+        type: 'success'
+      };
+    }
     
     setRegisterValidation(validations);
     
@@ -322,7 +394,8 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onRegistrationSuccess, onBa
       console.log('📡 Respuesta recibida:', result);
 
       if (response.ok && result.success) {
-        const unitName = units.find(u => u.id === registerData.organizationalUnitId)?.name;
+        // 🔧 ACTUALIZADO: Buscar nombre de unidad desde el estado dinámico
+        const unitName = units.find(u => u.id === registerData.organizationalUnitId)?.name || 'Unidad desconocida';
         const securityInfo = showSecurityQuestions && userSecurityQuestions.length > 0 
           ? ` con ${userSecurityQuestions.length} preguntas de seguridad` 
           : '';
@@ -335,7 +408,7 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onRegistrationSuccess, onBa
           password: '',
           firstName: '',
           lastName: '',
-          organizationalUnitId: 1
+          organizationalUnitId: units.length > 0 ? units[0].id : 0
         });
         setUserSecurityQuestions([]);
         setShowSecurityQuestions(false);
@@ -500,6 +573,7 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onRegistrationSuccess, onBa
             <FieldValidationMessage validation={registerValidation.password} />
           </div>
 
+          {/* 🔧 ACTUALIZADO: Select de unidades organizacionales dinámico */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Unidad Organizacional <span className="text-red-500">*</span>
@@ -507,14 +581,34 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onRegistrationSuccess, onBa
             <select
               value={registerData.organizationalUnitId}
               onChange={(e) => setRegisterData({ ...registerData, organizationalUnitId: parseInt(e.target.value) })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
+              className={getInputClasses(registerValidation.organizationalUnit)}
               required
+              disabled={loadingUnits}
             >
+              <option value={0}>
+                {loadingUnits ? '🔄 Cargando unidades...' : 'Seleccione una unidad organizacional'}
+              </option>
               {units.map(unit => (
-                <option key={unit.id} value={unit.id}>{unit.name}</option>
+                <option key={unit.id} value={unit.id}>
+                  {unit.name}
+                </option>
               ))}
             </select>
-            <p className="text-xs text-gray-500 mt-1">Seleccione la unidad donde trabajará</p>
+            
+            {/* 🔧 NUEVO: Mostrar estado de carga */}
+            {loadingUnits && (
+              <p className="text-xs text-blue-600 mt-1">
+                🔄 Cargando unidades organizacionales...
+              </p>
+            )}
+            
+            {!loadingUnits && units.length > 0 && (
+              <p className="text-xs text-gray-500 mt-1">
+                ✅ Seleccione la unidad donde trabajará ({units.length} disponibles)
+              </p>
+            )}
+            
+            <FieldValidationMessage validation={registerValidation.organizationalUnit} />
           </div>
 
           {/* Sección de preguntas de seguridad */}
@@ -625,19 +719,22 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onRegistrationSuccess, onBa
 
           <button
             type="submit"
-            disabled={loading || !isFormValid}
+            disabled={loading || !isFormValid || loadingUnits}
             className={`w-full py-3 px-4 rounded-lg font-semibold transition-colors ${
-              loading || !isFormValid
+              loading || !isFormValid || loadingUnits
                 ? 'bg-gray-400 cursor-not-allowed text-white' 
                 : 'bg-green-600 hover:bg-green-700 text-white'
             }`}
           >
-            {loading ? '🔄 Creando cuenta...' : '📝 Crear Cuenta'}
+            {loading ? '🔄 Creando cuenta...' : loadingUnits ? '⏳ Cargando...' : '📝 Crear Cuenta'}
           </button>
 
-          {!isFormValid && (
+          {(!isFormValid || loadingUnits) && (
             <p className="text-xs text-center text-gray-500">
-              Complete todos los campos correctamente para continuar
+              {loadingUnits 
+                ? 'Cargando información necesaria...' 
+                : 'Complete todos los campos correctamente para continuar'
+              }
             </p>
           )}
 
