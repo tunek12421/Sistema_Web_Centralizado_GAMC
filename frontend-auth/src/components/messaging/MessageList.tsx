@@ -6,7 +6,7 @@ import type { Message, MessageFilters } from '../../services/messageService';
 interface MessageListProps {
   onMessageSelect: (message: Message) => void;
   onCreateMessage: () => void;
-  refreshTrigger?: number; // Para forzar refresh desde componente padre
+  refreshTrigger?: number;
 }
 
 const MessageList: React.FC<MessageListProps> = ({ 
@@ -14,18 +14,13 @@ const MessageList: React.FC<MessageListProps> = ({
   onCreateMessage,
   refreshTrigger = 0 
 }) => {
+  // Estados principales
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>('');
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [totalMessages, setTotalMessages] = useState(0);
-  const [filters, setFilters] = useState<MessageFilters>({
-    page: 1,
-    limit: 10,
-    sortBy: 'created_at',
-    sortOrder: 'desc'
-  });
 
   // Estados para filtros
   const [searchText, setSearchText] = useState('');
@@ -34,19 +29,31 @@ const MessageList: React.FC<MessageListProps> = ({
   const [messageTypes, setMessageTypes] = useState<string[]>([]);
   const [messageStatuses, setMessageStatuses] = useState<string[]>([]);
   
-  // ✨ NUEVO - Estado del usuario actual
+  // Estado del usuario actual
   const [currentUser, setCurrentUser] = useState<any>(null);
+
+  // Filtros base
+  const [filters, setFilters] = useState<MessageFilters>({
+    page: 1,
+    limit: 10,
+    sortBy: 'created_at',
+    sortOrder: 'desc'
+  });
 
   // Cargar datos iniciales
   useEffect(() => {
-    // ✨ NUEVO - Cargar datos del usuario actual
+    // Cargar datos del usuario actual
     const userData = localStorage.getItem('user');
     if (userData) {
-      setCurrentUser(JSON.parse(userData));
+      try {
+        const user = JSON.parse(userData);
+        setCurrentUser(user);
+      } catch (e) {
+        console.error('Error parseando datos de usuario:', e);
+      }
     }
     
-    loadMessageTypes();
-    loadMessageStatuses();
+    loadInitialData();
   }, []);
 
   // Cargar mensajes cuando cambian los filtros o refreshTrigger
@@ -54,13 +61,28 @@ const MessageList: React.FC<MessageListProps> = ({
     loadMessages();
   }, [filters, refreshTrigger]);
 
+  // Función para cargar datos iniciales
+  const loadInitialData = async () => {
+    try {
+      // Cargar en paralelo
+      await Promise.allSettled([
+        loadMessageTypes(),
+        loadMessageStatuses()
+      ]);
+    } catch (error) {
+      console.error('Error en carga inicial:', error);
+    }
+  };
+
   // Cargar tipos de mensajes
   const loadMessageTypes = async () => {
     try {
       const types = await messageService.getMessageTypes();
       setMessageTypes(types);
     } catch (err) {
-      console.error('Error loading message types:', err);
+      console.error('Error cargando tipos de mensajes:', err);
+      // Usar fallback
+      setMessageTypes(['Información', 'Coordinación', 'Urgente']);
     }
   };
 
@@ -70,26 +92,73 @@ const MessageList: React.FC<MessageListProps> = ({
       const statuses = await messageService.getMessageStatuses();
       setMessageStatuses(statuses);
     } catch (err) {
-      console.error('Error loading message statuses:', err);
+      console.error('Error cargando estados de mensajes:', err);
+      // Usar fallback
+      setMessageStatuses(['Enviado', 'Leído', 'En Proceso', 'Resuelto']);
     }
   };
 
-  // Cargar mensajes
+  // Función principal de carga de mensajes
   const loadMessages = async () => {
     setLoading(true);
     setError('');
     
     try {
       const response = await messageService.getMessages(filters);
+      
+      if (!response || !Array.isArray(response.messages)) {
+        throw new Error('Formato de respuesta inválido');
+      }
+      
+      // Actualizar estado
       setMessages(response.messages);
       setCurrentPage(response.page);
       setTotalPages(response.totalPages);
       setTotalMessages(response.total);
+      
     } catch (err: any) {
+      console.error('Error en loadMessages:', err);
       setError(err.message || 'Error al cargar mensajes');
-      console.error('Error loading messages:', err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Funciones de filtro rápido
+  const applyQuickFilter = (filterType: 'received' | 'sent' | 'all') => {
+    if (!currentUser?.organizationalUnitId) {
+      return;
+    }
+
+    const unitId = currentUser.organizationalUnitId;
+
+    switch (filterType) {
+      case 'received':
+        setFilters(prev => ({
+          ...prev,
+          receiverUnitId: unitId,
+          senderUnitId: undefined,
+          page: 1
+        }));
+        break;
+        
+      case 'sent':
+        setFilters(prev => ({
+          ...prev,
+          senderUnitId: unitId,
+          receiverUnitId: undefined,
+          page: 1
+        }));
+        break;
+        
+      case 'all':
+        setFilters(prev => ({
+          ...prev,
+          receiverUnitId: undefined,
+          senderUnitId: undefined,
+          page: 1
+        }));
+        break;
     }
   };
 
@@ -111,12 +180,15 @@ const MessageList: React.FC<MessageListProps> = ({
     setSearchText('');
     setStatusFilter('');
     setUrgentFilter('');
-    setFilters({
+    
+    const baseFilters: MessageFilters = {
       page: 1,
       limit: 10,
       sortBy: 'created_at',
       sortOrder: 'desc'
-    });
+    };
+    
+    setFilters(baseFilters);
   };
 
   // Cambiar página
@@ -126,29 +198,33 @@ const MessageList: React.FC<MessageListProps> = ({
 
   // Marcar mensaje como leído
   const handleMarkAsRead = async (message: Message, event: React.MouseEvent) => {
-    event.stopPropagation(); // Prevent message selection
+    event.stopPropagation();
     
-    if (message.readAt) return; // Already read
+    if (message.readAt) {
+      return;
+    }
     
     try {
       await messageService.markAsRead(message.id);
+      
       // Update local state
       setMessages(messages.map(m => 
         m.id === message.id 
           ? { ...m, readAt: new Date().toISOString() }
           : m
       ));
+      
     } catch (err: any) {
-      console.error('Error marking as read:', err);
+      console.error(`Error marcando mensaje ${message.id} como leído:`, err);
     }
   };
 
-  // ✨ NUEVA FUNCIÓN - Determinar si es mensaje enviado o recibido
+  // Determinar si es mensaje enviado o recibido
   const isMessageSent = (message: Message): boolean => {
     return currentUser && message.sender.id === currentUser.id;
   };
 
-  // ✨ NUEVA FUNCIÓN - Obtener información de dirección del mensaje
+  // Obtener información de dirección del mensaje
   const getMessageDirection = (message: Message) => {
     if (isMessageSent(message)) {
       return {
@@ -192,23 +268,43 @@ const MessageList: React.FC<MessageListProps> = ({
 
   // Obtener icono de estado
   const getStatusIcon = (status: string) => {
-    switch (status) {
-      case 'SENT': return '📤';
-      case 'READ': return '👁️';
-      case 'IN_PROGRESS': return '🔄';
-      case 'RESPONDED': return '💬';
-      case 'RESOLVED': return '✅';
-      case 'ARCHIVED': return '📋';
-      case 'CANCELLED': return '❌';
-      default: return '📄';
+    switch (status.toUpperCase()) {
+      case 'SENT': 
+      case 'ENVIADO': 
+        return '📤';
+      case 'READ': 
+      case 'LEÍDO': 
+        return '👁️';
+      case 'IN_PROGRESS': 
+      case 'EN_PROCESO': 
+        return '🔄';
+      case 'RESPONDED': 
+      case 'RESPONDIDO': 
+        return '💬';
+      case 'RESOLVED': 
+      case 'RESUELTO': 
+        return '✅';
+      case 'ARCHIVED': 
+      case 'ARCHIVADO': 
+        return '📋';
+      case 'CANCELLED': 
+      case 'CANCELADO': 
+        return '❌';
+      default: 
+        return '📄';
     }
   };
 
+  // Renderizado con loading
   if (loading && messages.length === 0) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-        <span className="ml-3 text-gray-600">Cargando mensajes...</span>
+      <div className="bg-white rounded-lg shadow p-6">
+        <div className="flex items-center justify-center h-64">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+            <span className="mt-3 text-gray-600 block">Cargando mensajes...</span>
+          </div>
+        </div>
       </div>
     );
   }
@@ -218,9 +314,51 @@ const MessageList: React.FC<MessageListProps> = ({
       {/* Header con filtros */}
       <div className="border-b border-gray-200 p-6">
         <div className="flex justify-between items-center mb-4">
-          <h2 className="text-xl font-semibold text-gray-900">
-            Mensajes ({totalMessages})
-          </h2>
+          <div className="flex items-center space-x-4">
+            <h2 className="text-xl font-semibold text-gray-900">
+              Mensajes ({totalMessages})
+            </h2>
+            
+            {/* Botones de filtro rápido */}
+            {currentUser?.organizationalUnitId && (
+              <div className="flex items-center space-x-2">
+                <span className="text-sm text-gray-600">Vista:</span>
+                <button
+                  onClick={() => applyQuickFilter('received')}
+                  className={`px-3 py-1 rounded text-sm transition-colors ${
+                    filters.receiverUnitId === currentUser.organizationalUnitId && !filters.senderUnitId
+                      ? 'bg-blue-600 text-white' 
+                      : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                  }`}
+                >
+                  📥 Recibidos
+                </button>
+                
+                <button
+                  onClick={() => applyQuickFilter('sent')}
+                  className={`px-3 py-1 rounded text-sm transition-colors ${
+                    filters.senderUnitId === currentUser.organizationalUnitId && !filters.receiverUnitId
+                      ? 'bg-green-600 text-white' 
+                      : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                  }`}
+                >
+                  📤 Enviados
+                </button>
+                
+                <button
+                  onClick={() => applyQuickFilter('all')}
+                  className={`px-3 py-1 rounded text-sm transition-colors ${
+                    !filters.receiverUnitId && !filters.senderUnitId
+                      ? 'bg-purple-600 text-white' 
+                      : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                  }`}
+                >
+                  🌐 Todos
+                </button>
+              </div>
+            )}
+          </div>
+          
           <button
             onClick={onCreateMessage}
             className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors flex items-center"
@@ -286,6 +424,12 @@ const MessageList: React.FC<MessageListProps> = ({
           <div className="p-4 bg-red-50 border-l-4 border-red-500 text-red-700">
             <p className="font-medium">Error:</p>
             <p>{error}</p>
+            <button
+              onClick={loadMessages}
+              className="mt-2 text-sm text-red-600 hover:text-red-800 underline"
+            >
+              🔄 Reintentar
+            </button>
           </div>
         )}
 
@@ -294,10 +438,30 @@ const MessageList: React.FC<MessageListProps> = ({
             <span className="text-4xl mb-4 block">📭</span>
             <p className="text-lg mb-2">No hay mensajes</p>
             <p>Los mensajes aparecerán aquí cuando los reciba</p>
+            
+            {/* Sugerencias útiles */}
+            <div className="mt-4 p-3 bg-blue-50 rounded-lg text-sm">
+              <p className="font-medium text-blue-800">💡 Sugerencias:</p>
+              <ul className="text-blue-700 mt-1">
+                {(filters.receiverUnitId || filters.senderUnitId) && (
+                  <li>• Prueba hacer clic en "🌐 Todos" para ver todos los mensajes</li>
+                )}
+                {filters.searchText && (
+                  <li>• Prueba con términos de búsqueda diferentes</li>
+                )}
+                <li>• Verifica que hay mensajes en el sistema</li>
+                <li>• Usa los botones de filtro rápido arriba</li>
+              </ul>
+              <button
+                onClick={clearFilters}
+                className="mt-2 text-blue-600 hover:text-blue-800 underline"
+              >
+                Limpiar todos los filtros
+              </button>
+            </div>
           </div>
         ) : (
           messages.map((message) => {
-            // ✨ NUEVO - Obtener información de dirección
             const messageDirection = getMessageDirection(message);
             
             return (
@@ -311,7 +475,6 @@ const MessageList: React.FC<MessageListProps> = ({
                 <div className="flex items-start justify-between">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center mb-2">
-                      {/* ✨ NUEVO - Indicador de dirección */}
                       <span className="text-sm text-gray-600 mr-2">
                         {messageDirection.icon}
                       </span>
@@ -329,13 +492,14 @@ const MessageList: React.FC<MessageListProps> = ({
                     </p>
                     
                     <div className="flex items-center text-xs text-gray-500">
-                      {/* ✨ CORREGIDO - Mostrar dirección correcta */}
                       <span>
                         {messageDirection.label}: {messageDirection.unitName}
                         {messageDirection.personName && ` (${messageDirection.personName})`}
                       </span>
                       <span className="mx-2">•</span>
                       <span>{formatDate(message.createdAt)}</span>
+                      <span className="mx-2">•</span>
+                      <span>ID: {message.id}</span>
                     </div>
                   </div>
 
@@ -348,7 +512,6 @@ const MessageList: React.FC<MessageListProps> = ({
                         <span>{message.status.name}</span>
                       </div>
                       
-                      {/* ✨ CORREGIDO - Solo mostrar "marcar como leído" para mensajes recibidos no leídos */}
                       {!message.readAt && !isMessageSent(message) && (
                         <button
                           onClick={(e) => handleMarkAsRead(message, e)}
