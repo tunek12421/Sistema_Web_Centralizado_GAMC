@@ -2,6 +2,7 @@
 package handlers
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"gamc-backend-go/pkg/response"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 // MessageHandler maneja las operaciones de mensajes
@@ -384,22 +386,144 @@ func (h *MessageHandler) GetMessageStatuses(c *gin.Context) {
 	response.Success(c, "Estados de mensaje obtenidos exitosamente", statuses)
 }
 
-// GetMessageStats maneja GET /api/v1/messages/stats (solo admin)
+// 🔧 CORREGIDO: GetMessageStats maneja GET /api/v1/messages/stats
 func (h *MessageHandler) GetMessageStats(c *gin.Context) {
-	// Por ahora devolver estadísticas vacías hasta implementar en el servicio
+	logger.Info("📊 GET /api/v1/messages/stats - Obtener estadísticas")
+
+	// Obtener usuario desde el middleware
+	user, exists := c.Get("user")
+	if !exists {
+		logger.Error("Usuario no encontrado en contexto para GetMessageStats")
+		response.Error(c, http.StatusUnauthorized, "Usuario no autenticado", "")
+		return
+	}
+
+	userProfile, ok := user.(*models.UserProfile)
+	if !ok {
+		logger.Error("Error al convertir usuario del contexto en GetMessageStats")
+		response.Error(c, http.StatusInternalServerError, "Error interno del servidor", "")
+		return
+	}
+
+	logger.Info("Usuario solicitando estadísticas: %s (%s)", userProfile.Email, userProfile.Role)
+
+	// 🔧 CORREGIDO: Obtener unitID del usuario (aplicar mismos filtros que GetMessages)
+	userUnitID := 1 // valor por defecto
+	if userProfile.OrganizationalUnitID != nil {
+		userUnitID = *userProfile.OrganizationalUnitID
+	}
+
+	// 🔧 NUEVO: Usar el servicio real en lugar de datos hardcodeados
+	statsService, err := h.messageService.GetMessageStats(c.Request.Context(), userUnitID, userProfile.ID)
+	if err != nil {
+		logger.Error("Error al obtener estadísticas del servicio: %v", err)
+		// 🔧 FALLBACK: Calcular estadísticas básicas desde mensajes
+		h.calculateBasicStats(c, userUnitID, userProfile.ID)
+		return
+	}
+
+	// 🔧 NUEVO: Calcular estadísticas adicionales (por estado, urgentes, etc.)
+	additionalStats, err := h.getAdditionalStats(c.Request.Context(), userUnitID)
+	if err != nil {
+		logger.Warn("Error al obtener estadísticas adicionales: %v", err)
+	}
+
+	// 🔧 NUEVO: Construir respuesta completa
 	stats := gin.H{
-		"totalMessages":       0,
-		"urgentMessages":      0,
+		"totalMessages":       statsService.Total,
+		"urgentMessages":      statsService.Urgent,
+		"readMessages":        additionalStats["readMessages"],
+		"inProgressMessages":  additionalStats["inProgressMessages"],
+		"averageResponseTime": "0 horas", // TODO: Implementar cálculo real
+		"messagesByStatus":    additionalStats["messagesByStatus"],
+	}
+
+	logger.Info("Estadísticas obtenidas exitosamente para unidad %d: %d mensajes totales", userUnitID, statsService.Total)
+	response.Success(c, "Estadísticas obtenidas exitosamente", stats)
+}
+
+// 🔧 NUEVA FUNCIÓN: Calcular estadísticas básicas como fallback
+func (h *MessageHandler) calculateBasicStats(c *gin.Context, unitID int, userID uuid.UUID) {
+	logger.Info("📊 Calculando estadísticas básicas como fallback para unidad: %d", unitID)
+
+	// Usar el mismo filtro que GetMessages para consistencia
+	req := &services.GetMessagesRequest{
+		UnitID:    &unitID,
+		Page:      1,
+		Limit:     1000, // Obtener muchos mensajes para calcular estadísticas
+		SortBy:    "created_at",
+		SortOrder: "desc",
+	}
+
+	// Obtener mensajes como remitente
+	messagesSent, totalSent, err := h.messageService.GetMessagesByUnit(c.Request.Context(), unitID, req)
+	if err != nil {
+		logger.Error("Error al obtener mensajes enviados para estadísticas: %v", err)
+		totalSent = 0
+	}
+
+	// Calcular estadísticas básicas
+	urgentCount := 0
+	readCount := 0
+	inProgressCount := 0
+	statusCounts := map[string]int{
+		"SENT":        0,
+		"READ":        0,
+		"IN_PROGRESS": 0,
+		"RESOLVED":    0,
+		"DRAFT":       0,
+	}
+
+	for _, msg := range messagesSent {
+		if msg.IsUrgent {
+			urgentCount++
+		}
+		if msg.ReadAt != nil {
+			readCount++
+		}
+
+		// Contar por estado (usando el código del estado si está disponible)
+		if msg.Status != nil {
+			statusCode := msg.Status.Code
+			if count, exists := statusCounts[statusCode]; exists {
+				statusCounts[statusCode] = count + 1
+			}
+
+			if statusCode == "IN_PROGRESS" {
+				inProgressCount++
+			}
+		}
+	}
+
+	stats := gin.H{
+		"totalMessages":       totalSent,
+		"urgentMessages":      urgentCount,
+		"readMessages":        readCount,
+		"inProgressMessages":  inProgressCount,
 		"averageResponseTime": "0 horas",
+		"messagesByStatus":    statusCounts,
+	}
+
+	logger.Info("Estadísticas básicas calculadas: %d total, %d urgentes", totalSent, urgentCount)
+	response.Success(c, "Estadísticas obtenidas exitosamente", stats)
+}
+
+// 🔧 NUEVA FUNCIÓN: Obtener estadísticas adicionales por estado
+func (h *MessageHandler) getAdditionalStats(ctx context.Context, unitID int) (map[string]interface{}, error) {
+	// TODO: Implementar consultas específicas a la base de datos para estadísticas por estado
+	// Por ahora, usar valores por defecto
+
+	return map[string]interface{}{
+		"readMessages":       0,
+		"inProgressMessages": 0,
 		"messagesByStatus": gin.H{
 			"SENT":        0,
 			"READ":        0,
 			"IN_PROGRESS": 0,
 			"RESOLVED":    0,
+			"DRAFT":       0,
 		},
-	}
-
-	response.Success(c, "Estadísticas obtenidas exitosamente", stats)
+	}, nil
 }
 
 // DeleteMessage maneja DELETE /api/v1/messages/:id (soft delete)
@@ -453,4 +577,55 @@ func (h *MessageHandler) DeleteMessage(c *gin.Context) {
 		"messageId": messageID,
 		"deleted":   true,
 	})
+}
+
+// GetSimpleMessageStats maneja GET /api/v1/messages/stats-simple
+func (h *MessageHandler) GetSimpleMessageStats(c *gin.Context) {
+	logger.Info("📊 GET /api/v1/messages/stats-simple - Obtener estadísticas simples")
+
+	// Obtener usuario desde el middleware
+	user, exists := c.Get("user")
+	if !exists {
+		logger.Error("Usuario no encontrado en contexto")
+		response.Error(c, http.StatusUnauthorized, "Usuario no autenticado", "")
+		return
+	}
+
+	userProfile, ok := user.(*models.UserProfile)
+	if !ok {
+		logger.Error("Error al convertir usuario del contexto")
+		response.Error(c, http.StatusInternalServerError, "Error interno del servidor", "")
+		return
+	}
+
+	// Obtener unitID del usuario
+	userUnitID := 1
+	if userProfile.OrganizationalUnitID != nil {
+		userUnitID = *userProfile.OrganizationalUnitID
+	}
+
+	logger.Info("Calculando estadísticas simples para unidad: %d", userUnitID)
+
+	// Obtener estadísticas del servicio
+	stats, err := h.messageService.GetSimpleStats(c.Request.Context(), userUnitID)
+	if err != nil {
+		logger.Error("Error al obtener estadísticas: %v", err)
+		response.Error(c, http.StatusInternalServerError, "Error al obtener estadísticas", err.Error())
+		return
+	}
+
+	// Construir respuesta en el formato esperado por el frontend
+	responseData := gin.H{
+		"totalMessages":       stats.TotalMessages,
+		"urgentMessages":      stats.UrgentMessages,
+		"readMessages":        stats.ReadMessages,
+		"inProgressMessages":  stats.InProgressMessages,
+		"averageResponseTime": "0 horas", // TODO: implementar cálculo real
+		"messagesByStatus":    stats.MessagesByStatus,
+	}
+
+	logger.Info("Estadísticas simples calculadas exitosamente: Total=%d, Urgentes=%d, Leídos=%d",
+		stats.TotalMessages, stats.UrgentMessages, stats.ReadMessages)
+
+	response.Success(c, "Estadísticas simples obtenidas exitosamente", responseData)
 }

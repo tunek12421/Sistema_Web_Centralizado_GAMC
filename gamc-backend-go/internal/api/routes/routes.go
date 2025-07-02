@@ -231,13 +231,16 @@ func SetupRoutes(appCtx *config.AppContext) *gin.Engine {
 			// IMPORTANTE: Usar rutas sin trailing slash
 			messages.GET("", messageHandler.GetMessages)
 			messages.POST("", messageHandler.CreateMessage)
+
+			messages.GET("/stats", messageHandler.GetMessageStats)
+			messages.GET("/stats-simple", messageHandler.GetSimpleMessageStats)
+
 			messages.GET("/:id", messageHandler.GetMessageByID)
 			messages.PUT("/:id/read", messageHandler.MarkAsRead)
 			messages.PUT("/:id/status", messageHandler.UpdateMessageStatus)
 			messages.DELETE("/:id", messageHandler.DeleteMessage)
 
 			// Estadísticas (solo admin - se valida internamente)
-			messages.GET("/stats", messageHandler.GetMessageStats)
 		}
 
 		// ========================================

@@ -586,6 +586,99 @@ func (s *MessageService) auditLog(ctx context.Context, userID uuid.UUID, action 
 	}
 }
 
+// Agregar este método en message_service.go
+
+// GetSimpleStats obtiene estadísticas simples de mensajes para una unidad
+func (s *MessageService) GetSimpleStats(ctx context.Context, unitID int) (*MessageStatsResponse, error) {
+	logger.Info("📊 Obteniendo estadísticas simples para unidad: %d", unitID)
+
+	stats := &MessageStatsResponse{}
+
+	// Total de mensajes
+	totalQuery := `
+		SELECT COUNT(*) 
+		FROM messages m 
+		WHERE (m.sender_unit_id = ? OR m.receiver_unit_id = ?) 
+		AND m.archived_at IS NULL
+	`
+	if err := s.db.Raw(totalQuery, unitID, unitID).Scan(&stats.TotalMessages).Error; err != nil {
+		logger.Error("Error al obtener total de mensajes: %v", err)
+		return nil, err
+	}
+
+	// Mensajes urgentes
+	urgentQuery := `
+		SELECT COUNT(*) 
+		FROM messages m 
+		WHERE (m.sender_unit_id = ? OR m.receiver_unit_id = ?) 
+		AND m.is_urgent = true 
+		AND m.archived_at IS NULL
+	`
+	if err := s.db.Raw(urgentQuery, unitID, unitID).Scan(&stats.UrgentMessages).Error; err != nil {
+		logger.Error("Error al obtener mensajes urgentes: %v", err)
+		return nil, err
+	}
+
+	// Mensajes leídos
+	readQuery := `
+		SELECT COUNT(*) 
+		FROM messages m 
+		WHERE (m.sender_unit_id = ? OR m.receiver_unit_id = ?) 
+		AND m.read_at IS NOT NULL 
+		AND m.archived_at IS NULL
+	`
+	if err := s.db.Raw(readQuery, unitID, unitID).Scan(&stats.ReadMessages).Error; err != nil {
+		logger.Error("Error al obtener mensajes leídos: %v", err)
+		return nil, err
+	}
+
+	// Mensajes por estado
+	type StatusCount struct {
+		Code  string
+		Count int
+	}
+
+	var statusCounts []StatusCount
+	statusQuery := `
+		SELECT ms.code, COUNT(*) as count
+		FROM messages m 
+		JOIN message_statuses ms ON m.status_id = ms.id 
+		WHERE (m.sender_unit_id = ? OR m.receiver_unit_id = ?) 
+		AND m.archived_at IS NULL
+		GROUP BY ms.code
+	`
+	if err := s.db.Raw(statusQuery, unitID, unitID).Scan(&statusCounts).Error; err != nil {
+		logger.Error("Error al obtener mensajes por estado: %v", err)
+		return nil, err
+	}
+
+	// Mapear los conteos por estado
+	stats.MessagesByStatus = make(map[string]int)
+	for _, sc := range statusCounts {
+		stats.MessagesByStatus[sc.Code] = sc.Count
+	}
+
+	// Asignar valores específicos
+	stats.InProgressMessages = stats.MessagesByStatus["IN_PROGRESS"]
+	stats.SentMessages = stats.MessagesByStatus["SENT"]
+	stats.DraftMessages = stats.MessagesByStatus["DRAFT"]
+	stats.ResolvedMessages = stats.MessagesByStatus["RESOLVED"]
+
+	return stats, nil
+}
+
+// MessageStatsResponse estructura para las estadísticas
+type MessageStatsResponse struct {
+	TotalMessages      int            `json:"totalMessages"`
+	UrgentMessages     int            `json:"urgentMessages"`
+	ReadMessages       int            `json:"readMessages"`
+	InProgressMessages int            `json:"inProgressMessages"`
+	SentMessages       int            `json:"sentMessages"`
+	DraftMessages      int            `json:"draftMessages"`
+	ResolvedMessages   int            `json:"resolvedMessages"`
+	MessagesByStatus   map[string]int `json:"messagesByStatus"`
+}
+
 // MessageStats representa estadísticas de mensajes
 type MessageStats struct {
 	Total  int64 `json:"total"`
